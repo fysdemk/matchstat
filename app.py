@@ -136,7 +136,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     with st.spinner("🔍 Extrayendo datos en vivo desde Google Search y procesando algoritmos..."):
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.8-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     tools=[{"google_search": {}}]
