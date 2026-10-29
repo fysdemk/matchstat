@@ -133,16 +133,31 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     }}
     """
 
-    with st.spinner("🔍 Extrayendo datos en vivo desde Google Search y procesando algoritmos..."):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[{"google_search": {}}]
-                )
-            )
+    modelos_gratuitos = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.8-flash"]
+    response = None
+    ultimo_error = ""
 
+    with st.spinner("🔍 Extrayendo datos en vivo desde Google Search y procesando algoritmos..."):
+        for m in modelos_gratuitos:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[{"google_search": {}}]
+                    )
+                )
+                if response and response.text:
+                    break
+            except Exception as e:
+                ultimo_error = str(e)
+                continue
+
+        if not response or not response.text:
+            st.error(f"Error al conectar: {ultimo_error}")
+            st.stop()
+
+        try:
             raw_text = response.text
             match = re.search(r'\{.*\}', raw_text, re.DOTALL)
             if not match:
@@ -190,4 +205,4 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
                 render_equipo(data["visitante"], es_local=False)
 
         except Exception as e:
-            st.error(f"Error en la ejecución: {str(e)}")
+            st.error(f"Error procesando los datos: {str(e)}")
