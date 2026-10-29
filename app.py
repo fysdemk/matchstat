@@ -1,10 +1,11 @@
 import streamlit as st
 import json
 import re
+import time
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="MATCHSTAT Pro Engine", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="MATCHSTAT Global Engine", page_icon="⚽", layout="wide")
 
 st.markdown("""
 <style>
@@ -57,8 +58,8 @@ def calcular_motor(valores, modo="8/5/3/1"):
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
     }
 
-st.title("⚽ MATCHSTAT Engine")
-st.caption("Motor cuantitativo de análisis deportivo.")
+st.title("⚽ MATCHSTAT Global Engine")
+st.caption("Motor cuantitativo universal de análisis deportivo.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
@@ -69,11 +70,11 @@ with st.sidebar:
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    equipo_local = st.text_input("Equipo Local", value="Fiorentina")
+    equipo_local = st.text_input("Equipo Local", value="Boca Juniors")
 with col2:
-    equipo_visitante = st.text_input("Equipo Visitante", value="Atalanta")
+    equipo_visitante = st.text_input("Equipo Visitante", value="River Plate")
 with col3:
-    competicion = st.text_input("Competición / Fecha", value="Serie A")
+    competicion = st.text_input("Competición / Liga", value="Liga Profesional Argentina")
 
 if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     if not api_key:
@@ -84,11 +85,12 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-    Eres un analista deportivo cuantitativo de élite. Proporciona las estadísticas REALES de los últimos {n_partidos} partidos oficiales:
+    Eres un analista deportivo cuantitativo internacional de élite. Analiza el partido: {equipo_local} vs {equipo_visitante} en {competicion}.
+    Proporciona las estadísticas REALES de los últimos {n_partidos} partidos oficiales:
     1. Del equipo LOCAL ({equipo_local}) jugando en CASA.
     2. Del equipo VISITANTE ({equipo_visitante}) jugando FUERA.
 
-    Para cada equipo, entrega listas con exactamente {n_partidos} enteros del más antiguo al más reciente en estas 9 métricas:
+    Para cada equipo, entrega listas con exactamente {n_partidos} enteros del más antiguo al más reciente en estas 9 métricas oficiales:
     1. Goles
     2. Tiros de esquina
     3. Tarjetas
@@ -99,53 +101,76 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     8. Saques de meta
     9. Tackles
 
-    Devuelve ÚNICAMENTE un JSON con esta estructura exacta:
+    Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
     {{
-      "contexto": "Síntesis breve de 2 frases sobre el duelo.",
+      "contexto": "Síntesis breve de 2 frases sobre la dinámica actual de ambos equipos.",
       "local": {{
         "nombre": "{equipo_local}",
         "stats": {{
-          "Goles": [8 enteros],
-          "Tiros de esquina": [8 enteros],
-          "Tarjetas": [8 enteros],
-          "Remates totales": [8 enteros],
-          "Tiros al arco": [8 enteros],
-          "Faltas cometidas": [8 enteros],
-          "Fueras de juego": [8 enteros],
-          "Saques de meta": [8 enteros],
-          "Tackles": [8 enteros]
+          "Goles": [{n_partidos} enteros],
+          "Tiros de esquina": [{n_partidos} enteros],
+          "Tarjetas": [{n_partidos} enteros],
+          "Remates totales": [{n_partidos} enteros],
+          "Tiros al arco": [{n_partidos} enteros],
+          "Faltas cometidas": [{n_partidos} enteros],
+          "Fueras de juego": [{n_partidos} enteros],
+          "Saques de meta": [{n_partidos} enteros],
+          "Tackles": [{n_partidos} enteros]
         }}
       }},
       "visitante": {{
         "nombre": "{equipo_visitante}",
         "stats": {{
-          "Goles": [8 enteros],
-          "Tiros de esquina": [8 enteros],
-          "Tarjetas": [8 enteros],
-          "Remates totales": [8 enteros],
-          "Tiros al arco": [8 enteros],
-          "Faltas cometidas": [8 enteros],
-          "Fueras de juego": [8 enteros],
-          "Saques de meta": [8 enteros],
-          "Tackles": [8 enteros]
+          "Goles": [{n_partidos} enteros],
+          "Tiros de esquina": [{n_partidos} enteros],
+          "Tarjetas": [{n_partidos} enteros],
+          "Remates totales": [{n_partidos} enteros],
+          "Tiros al arco": [{n_partidos} enteros],
+          "Faltas cometidas": [{n_partidos} enteros],
+          "Fueras de juego": [{n_partidos} enteros],
+          "Saques de meta": [{n_partidos} enteros],
+          "Tackles": [{n_partidos} enteros]
         }}
       }}
     }}
     """
 
-    with st.spinner("⚡ Procesando métricas con el motor de IA..."):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+    # Red de seguridad con 3 modelos para evitar saturaciones (503 / 429)
+    modelos_disponibles = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-2.5-flash-lite"]
+    response = None
+    ultimo_error = ""
+
+    with st.spinner("⚡ Conectando con el motor de IA global..."):
+        for m in modelos_disponibles:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
                 )
-            )
+                if response and response.text:
+                    break
+            except Exception as e:
+                ultimo_error = str(e)
+                time.sleep(0.6)  # Breve pausa antes de saltar al modelo suplente
+                continue
 
-            data = json.loads(response.text)
+        if not response or not response.text:
+            st.error(f"Error temporal de servidores: {ultimo_error}. Por favor reintenta en unos segundos.")
+            st.stop()
 
-            st.success("✅ Análisis procesado y verificado correctamente.")
+        try:
+            raw_text = response.text
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if not match:
+                st.error("No se pudo procesar la respuesta. Inténtalo nuevamente.")
+                st.stop()
+            
+            data = json.loads(match.group(0))
+
+            st.success("✅ Análisis procesado con éxito.")
             st.markdown(f"**Contexto Competitivo:** {data.get('contexto', '')}")
 
             tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
