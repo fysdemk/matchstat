@@ -135,7 +135,6 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
 
     with st.spinner("⚡ Procesando métricas con el motor de IA..."):
         try:
-            # Modo directo y veloz (sin esperas de reintento)
             response = client.models.generate_content(
                 model="gemini-3.8-flash",
                 contents=prompt,
@@ -181,4 +180,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
                 render_equipo(data["local"], es_local=True)
 
             with tab_visita:
-                render_equipo(data["visitante"], es_lo
+                render_equipo(data["visitante"], es_local=False)
+
+        except Exception as e:
+            st.error(f"Error procesando los datos: {str(e)}")
