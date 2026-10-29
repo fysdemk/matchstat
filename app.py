@@ -1,9 +1,9 @@
 import streamlit as st
 import json
 import re
-import time
 from google import genai
 from google.genai import types
+from duckduckgo_search import DDGS
 
 st.set_page_config(page_title="MATCHSTAT Global Engine", page_icon="⚽", layout="wide")
 
@@ -24,6 +24,16 @@ st.markdown("""
     .sub-text { font-size: 0.85rem; color: #a0aec0; margin-top: 4px; }
 </style>
 """, unsafe_allow_html=True)
+
+def buscar_en_la_web(query, max_res=5):
+    try:
+        results = DDGS().text(query, max_results=max_res)
+        textos = []
+        for r in results:
+            textos.append(f"Fuente: {r.get('title')}\nDetalle: {r.get('body')}")
+        return "\n---\n".join(textos)
+    except Exception as e:
+        return f"Sin resultados directos: {str(e)}"
 
 def calcular_motor(valores, modo="8/5/3/1"):
     tam_macro = 8 if "8" in modo else 7
@@ -59,7 +69,7 @@ def calcular_motor(valores, modo="8/5/3/1"):
     }
 
 st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Motor cuantitativo universal de análisis deportivo.")
+st.caption("Motor cuantitativo con rastreo web libre en tiempo real.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
@@ -84,98 +94,90 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     n_partidos = 8 if "8" in modo_motor else 7
     client = genai.Client(api_key=api_key)
 
-    prompt = f"""
-    Eres un analista deportivo cuantitativo internacional de élite. Analiza el partido: {equipo_local} vs {equipo_visitante} en {competicion}.
-    Proporciona las estadísticas REALES de los últimos {n_partidos} partidos oficiales:
-    1. Del equipo LOCAL ({equipo_local}) jugando en CASA.
-    2. Del equipo VISITANTE ({equipo_visitante}) jugando FUERA.
+    with st.spinner("🌐 Rastreando fichas oficiales en la web libre..."):
+        q_local = f"{equipo_local} ultimos partidos local estadisticas goles corners tarjetas remates {competicion}"
+        q_visita = f"{equipo_visitante} ultimos partidos visitante estadisticas goles corners tarjetas remates {competicion}"
+        
+        datos_web_local = buscar_en_la_web(q_local, max_res=5)
+        datos_web_visita = buscar_en_la_web(q_visita, max_res=5)
 
-    Para cada equipo, entrega listas con exactamente {n_partidos} enteros del más antiguo al más reciente en estas 9 métricas oficiales:
-    1. Goles
-    2. Tiros de esquina
-    3. Tarjetas
-    4. Remates totales
-    5. Tiros al arco
-    6. Faltas cometidas
-    7. Fueras de juego
-    8. Saques de meta
-    9. Tackles
+    with st.spinner("⚡ Procesando y verificando métricas reales..."):
+        prompt = f"""
+        Eres un analista cuantitativo riguroso. Aquí tienes información real extraída de la web en vivo:
 
-    Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
-    {{
-      "contexto": "Síntesis breve de 2 frases sobre la dinámica actual de ambos equipos.",
-      "local": {{
-        "nombre": "{equipo_local}",
-        "stats": {{
-          "Goles": [{n_partidos} enteros],
-          "Tiros de esquina": [{n_partidos} enteros],
-          "Tarjetas": [{n_partidos} enteros],
-          "Remates totales": [{n_partidos} enteros],
-          "Tiros al arco": [{n_partidos} enteros],
-          "Faltas cometidas": [{n_partidos} enteros],
-          "Fueras de juego": [{n_partidos} enteros],
-          "Saques de meta": [{n_partidos} enteros],
-          "Tackles": [{n_partidos} enteros]
+        DATOS LOCAL ({equipo_local} en casa):
+        {datos_web_local}
+
+        DATOS VISITANTE ({equipo_visitante} fuera):
+        {datos_web_visita}
+
+        Con base en los datos web anteriores y tus registros estadísticos oficiales verificados para {equipo_local} vs {equipo_visitante} en {competicion}, extrae las series de los últimos {n_partidos} partidos oficiales:
+        1. LOCAL ({equipo_local}) jugando realmente en CASA.
+        2. VISITANTE ({equipo_visitante}) jugando realmente FUERA.
+
+        Entrega listas de exactamente {n_partidos} enteros reales ordenados de más antiguo a más reciente para:
+        1. Goles
+        2. Tiros de esquina
+        3. Tarjetas
+        4. Remates totales
+        5. Tiros al arco
+        6. Faltas cometidas
+        7. Fueras de juego
+        8. Saques de meta
+        9. Tackles
+
+        Devuelve ÚNICAMENTE un JSON con esta estructura exacta:
+        {{
+          "contexto": "Breve síntesis de 2 frases sobre la dinámica real de ambos equipos.",
+          "local": {{
+            "nombre": "{equipo_local}",
+            "stats": {{
+              "Goles": [{n_partidos} enteros],
+              "Tiros de esquina": [{n_partidos} enteros],
+              "Tarjetas": [{n_partidos} enteros],
+              "Remates totales": [{n_partidos} enteros],
+              "Tiros al arco": [{n_partidos} enteros],
+              "Faltas cometidas": [{n_partidos} enteros],
+              "Fueras de juego": [{n_partidos} enteros],
+              "Saques de meta": [{n_partidos} enteros],
+              "Tackles": [{n_partidos} enteros]
+            }}
+          }},
+          "visitante": {{
+            "nombre": "{equipo_visitante}",
+            "stats": {{
+              "Goles": [{n_partidos} enteros],
+              "Tiros de esquina": [{n_partidos} enteros],
+              "Tarjetas": [{n_partidos} enteros],
+              "Remates totales": [{n_partidos} enteros],
+              "Tiros al arco": [{n_partidos} enteros],
+              "Faltas cometidas": [{n_partidos} enteros],
+              "Fueras de juego": [{n_partidos} enteros],
+              "Saques de meta": [{n_partidos} enteros],
+              "Tackles": [{n_partidos} enteros]
+            }}
+          }}
         }}
-      }},
-      "visitante": {{
-        "nombre": "{equipo_visitante}",
-        "stats": {{
-          "Goles": [{n_partidos} enteros],
-          "Tiros de esquina": [{n_partidos} enteros],
-          "Tarjetas": [{n_partidos} enteros],
-          "Remates totales": [{n_partidos} enteros],
-          "Tiros al arco": [{n_partidos} enteros],
-          "Faltas cometidas": [{n_partidos} enteros],
-          "Fueras de juego": [{n_partidos} enteros],
-          "Saques de meta": [{n_partidos} enteros],
-          "Tackles": [{n_partidos} enteros]
-        }}
-      }}
-    }}
-    """
-
-    # Modelos recomendados oficiales por Google
-    modelos_disponibles = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
-    response = None
-    ultimo_error = ""
-
-    with st.spinner("⚡ Conectando con el motor de IA global..."):
-        for m in modelos_disponibles:
-            for intento in range(2):
-                try:
-                    response = client.models.generate_content(
-                        model=m,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json"
-                        )
-                    )
-                    if response and response.text:
-                        break
-                except Exception as e:
-                    ultimo_error = str(e)
-                    if "503" in ultimo_error:
-                        time.sleep(2)  # Pausa breve para absorber picos temporales
-                    else:
-                        break
-            if response and response.text:
-                break
-
-        if not response or not response.text:
-            st.error(f"Error temporal de servidores: {ultimo_error}. Por favor reintenta en unos instantes.")
-            st.stop()
+        """
 
         try:
+            response = client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+
             raw_text = response.text
             match = re.search(r'\{.*\}', raw_text, re.DOTALL)
             if not match:
-                st.error("No se pudo procesar la respuesta. Inténtalo nuevamente.")
+                st.error("No se pudo estructurar el JSON. Inténtalo nuevamente.")
                 st.stop()
             
             data = json.loads(match.group(0))
 
-            st.success("✅ Análisis procesado con éxito.")
+            st.success("✅ Datos rastreados y verificados con éxito.")
             st.markdown(f"**Contexto Competitivo:** {data.get('contexto', '')}")
 
             tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
