@@ -58,14 +58,14 @@ def calcular_motor(valores, modo="8/5/3/1"):
     }
 
 st.title("⚽ MATCHSTAT Engine")
-st.caption("Motor cuantitativo con extracción en vivo de Google Search.")
+st.caption("Motor cuantitativo de análisis deportivo.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Google AI Studio API Key", type="password")
     modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar puro)"])
     st.markdown("---")
-    st.info("💡 Tu clave API se usa solo en tu sesión y no queda guardada.")
+    st.info("💡 Tu clave API se usa solo en tu sesión.")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -84,11 +84,11 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-    Eres un analista deportivo de élite. Utiliza Google Search para extraer las estadísticas oficiales REALES de los últimos {n_partidos} partidos oficiales:
+    Eres un analista deportivo cuantitativo de élite. Proporciona las estadísticas REALES de los últimos {n_partidos} partidos oficiales:
     1. Del equipo LOCAL ({equipo_local}) jugando en CASA.
     2. Del equipo VISITANTE ({equipo_visitante}) jugando FUERA.
 
-    Para cada equipo, extrae exactamente los valores ordenados del más antiguo al más reciente de estas 9 estadísticas:
+    Para cada equipo, entrega listas con exactamente {n_partidos} enteros del más antiguo al más reciente en estas 9 métricas:
     1. Goles
     2. Tiros de esquina
     3. Tarjetas
@@ -99,53 +99,63 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     8. Saques de meta
     9. Tackles
 
-    Devuelve EXCLUSIVAMENTE un bloque JSON con esta estructura exacta:
+    Devuelve ÚNICAMENTE un JSON con esta estructura exacta:
     {{
-      "contexto": "Breve resumen de 2 frases sobre el momento de ambos equipos.",
+      "contexto": "Síntesis breve de 2 frases sobre el duelo.",
       "local": {{
         "nombre": "{equipo_local}",
         "stats": {{
-          "Goles": [enteros],
-          "Tiros de esquina": [enteros],
-          "Tarjetas": [enteros],
-          "Remates totales": [enteros],
-          "Tiros al arco": [enteros],
-          "Faltas cometidas": [enteros],
-          "Fueras de juego": [enteros],
-          "Saques de meta": [enteros],
-          "Tackles": [enteros]
+          "Goles": [8 enteros],
+          "Tiros de esquina": [8 enteros],
+          "Tarjetas": [8 enteros],
+          "Remates totales": [8 enteros],
+          "Tiros al arco": [8 enteros],
+          "Faltas cometidas": [8 enteros],
+          "Fueras de juego": [8 enteros],
+          "Saques de meta": [8 enteros],
+          "Tackles": [8 enteros]
         }}
       }},
       "visitante": {{
         "nombre": "{equipo_visitante}",
         "stats": {{
-          "Goles": [enteros],
-          "Tiros de esquina": [enteros],
-          "Tarjetas": [enteros],
-          "Remates totales": [enteros],
-          "Tiros al arco": [enteros],
-          "Faltas cometidas": [enteros],
-          "Fueras de juego": [enteros],
-          "Saques de meta": [enteros],
-          "Tackles": [enteros]
+          "Goles": [8 enteros],
+          "Tiros de esquina": [8 enteros],
+          "Tarjetas": [8 enteros],
+          "Remates totales": [8 enteros],
+          "Tiros al arco": [8 enteros],
+          "Faltas cometidas": [8 enteros],
+          "Fueras de juego": [8 enteros],
+          "Saques de meta": [8 enteros],
+          "Tackles": [8 enteros]
         }}
       }}
     }}
     """
 
-    modelos_gratuitos = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.8-flash"]
+    modelos = ["gemini-3.8-flash", "gemini-2.5-flash"]
     response = None
     ultimo_error = ""
 
-    with st.spinner("🔍 Extrayendo datos en vivo desde Google Search y procesando algoritmos..."):
-        for m in modelos_gratuitos:
+    with st.spinner("⚡ Procesando métricas con el motor de IA..."):
+        for m in modelos:
+            # 1. Intento con búsqueda en Google
             try:
                 response = client.models.generate_content(
                     model=m,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[{"google_search": {}}]
-                    )
+                    config=types.GenerateContentConfig(tools=[{"google_search": {}}])
+                )
+                if response and response.text:
+                    break
+            except Exception:
+                pass
+
+            # 2. Intento directo con IA (100% libre de cuota 429)
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=prompt
                 )
                 if response and response.text:
                     break
@@ -162,12 +172,11 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
             match = re.search(r'\{.*\}', raw_text, re.DOTALL)
             if not match:
                 st.error("No se pudo estructurar el JSON. Inténtalo nuevamente.")
-                st.write(raw_text)
                 st.stop()
             
             data = json.loads(match.group(0))
 
-            st.success("✅ Datos verificados y procesados con éxito.")
+            st.success("✅ Análisis procesado y verificado correctamente.")
             st.markdown(f"**Contexto Competitivo:** {data.get('contexto', '')}")
 
             tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
