@@ -135,30 +135,35 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     }}
     """
 
-    # Red de seguridad con 3 modelos para evitar saturaciones (503 / 429)
-    modelos_disponibles = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-2.5-flash-lite"]
+    # Modelos recomendados oficiales por Google
+    modelos_disponibles = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
     response = None
     ultimo_error = ""
 
     with st.spinner("⚡ Conectando con el motor de IA global..."):
         for m in modelos_disponibles:
-            try:
-                response = client.models.generate_content(
-                    model=m,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json"
+            for intento in range(2):
+                try:
+                    response = client.models.generate_content(
+                        model=m,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json"
+                        )
                     )
-                )
-                if response and response.text:
-                    break
-            except Exception as e:
-                ultimo_error = str(e)
-                time.sleep(0.6)  # Breve pausa antes de saltar al modelo suplente
-                continue
+                    if response and response.text:
+                        break
+                except Exception as e:
+                    ultimo_error = str(e)
+                    if "503" in ultimo_error:
+                        time.sleep(2)  # Pausa breve para absorber picos temporales
+                    else:
+                        break
+            if response and response.text:
+                break
 
         if not response or not response.text:
-            st.error(f"Error temporal de servidores: {ultimo_error}. Por favor reintenta en unos segundos.")
+            st.error(f"Error temporal de servidores: {ultimo_error}. Por favor reintenta en unos instantes.")
             st.stop()
 
         try:
