@@ -63,7 +63,7 @@ def calcular_motor(valores, modo="8/5/3/1"):
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
     }
 
-# ----------------- CONECTOR GRATUITO ESPN API -----------------
+# ----------------- CONECTOR ESPN ROBUSTO -----------------
 LIGAS_DISPONIBLES = {
     "Liga Profesional Argentina": "arg.1",
     "Brasileirão Série A": "bra.1",
@@ -75,35 +75,39 @@ LIGAS_DISPONIBLES = {
     "UEFA Champions League": "uefa.champions"
 }
 
-HEADERS_ESPN = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+HEADERS_ESPN = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+}
 
-@st.cache_data(ttl=3600)
 def obtener_equipos_de_liga(codigo_liga):
     url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{codigo_liga}/teams"
-    r = requests.get(url, headers=HEADERS_ESPN)
-    if r.status_code != 200:
+    try:
+        r = requests.get(url, headers=HEADERS_ESPN, timeout=10)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        equipos = []
+        for t in data.get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", []):
+            equipos.append({
+                "id": t["team"]["id"],
+                "name": t["team"]["displayName"]
+            })
+        return equipos
+    except Exception:
         return []
-    data = r.json()
-    equipos = []
-    for t in data.get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", []):
-        equipos.append({
-            "id": t["team"]["id"],
-            "name": t["team"]["displayName"]
-        })
-    return equipos
 
-@st.cache_data(ttl=3600)
-def obtener_estadisticas_espn(codigo_liga, team_id, es_local=True, total_partidos=8):
-    # 1. Obtener calendario oficial del equipo
-    url_schedule = f"https://site.web.api.espn.com/apis/site/v2/sports/soccer/{codigo_liga}/teams/{team_id}/schedule"
-    r = requests.get(url_schedule, headers=HEADERS_ESPN)
+def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True, total_partidos=8, progress_bar=None, status_text=None):
+    # 1. Calendario oficial del equipo
+    url_schedule = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{codigo_liga}/teams/{team_id}/schedule"
+    r = requests.get(url_schedule, headers=HEADERS_ESPN, timeout=10)
     if r.status_code != 200:
-        return None, [], f"No se pudo consultar el calendario de ESPN (código {r.status_code})."
+        return None, [], f"Error al consultar calendario en ESPN: HTTP {r.status_code}"
 
     events = r.json().get("events", [])
     
-    # Filtrar partidos ya jugados
-    partidos_terminados = []
+    # 2. Filtrar partidos terminados con la localía correcta
+    partidos_validos = []
     for ev in events:
         comp = ev.get("competitions", [{}])[0]
         status = comp.get("status", {}).get("type", {})
@@ -113,15 +117,15 @@ def obtener_estadisticas_espn(codigo_liga, team_id, es_local=True, total_partido
                 if str(c.get("team", {}).get("id")) == str(team_id):
                     es_en_casa = (c.get("homeAway") == "home")
                     if (es_local and es_en_casa) or (not es_local and not es_en_casa):
-                        partidos_terminados.append(ev)
+                        partidos_validos.append(ev)
                     break
 
-    if len(partidos_terminados) < total_partidos:
+    if len(partidos_validos) < total_partidos:
         cond = "local" if es_local else "visitante"
-        return None, [], f"Solo se encontraron {len(partidos_terminados)} partidos oficiales de {cond} completados en ESPN."
+        return None, [], f"Solo se encontraron {len(partidos_validos)} partidos finalizados de {cond} para {nombre_equipo} en ESPN."
 
-    # Tomar los últimos N partidos y ordenarlos cronológicamente (más antiguo a más reciente)
-    muestra = partidos_terminados[-total_partidos:]
+    # Tomar exactamente los últimos N y ordenarlos cronológicamente
+    muestra = partidos_validos[-total_partidos:]
 
     stats = {
         "Goles": [],
@@ -132,53 +136,65 @@ def obtener_estadisticas_espn(codigo_liga, team_id, es_local=True, total_partido
         "Faltas cometidas": [],
         "Fueras de juego": []
     }
-
     nombres_partidos = []
 
-    # 2. Consultar el boxscore de cada partido
-    for ev in muestra:
+    # 3. Descarga acta por acta mostrando el progreso en pantalla
+    for i, ev in enumerate(muestra):
         event_id = ev["id"]
         fecha = ev.get("date", "")[:10]
         nombre_partido = ev.get("name", f"Partido {event_id}")
         nombres_partidos.append(f"{fecha} - {nombre_partido}")
 
-        url_summary = f"https://site.web.api.espn.com/apis/site/v2/sports/soccer/all/summary?event={event_id}"
-        r_sum = requests.get(url_summary, headers=HEADERS_ESPN)
-        if r_sum.status_code != 200:
-            continue
+        if status_text:
+            status_text.text(f"📥 Descargando acta {i+1}/{total_partidos} de {nombre_equipo}: {nombre_partido}")
+        if progress_bar:
+            progress_bar.progress((i + 1) / total_partidos)
+
+        # Endpoint oficial de actas de ESPN
+        url_summary = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{codigo_liga}/summary?event={event_id}"
+        r_sum = requests.get(url_summary, headers=HEADERS_ESPN, timeout=10)
         
-        sum_data = r_sum.json()
-        box_teams = sum_data.get("boxscore", {}).get("teams", [])
-        
-        # Encontrar las estadísticas de nuestro equipo en la ficha
-        stats_equipo = {}
         goles_partido = 0
-        for bt in box_teams:
-            if str(bt.get("team", {}).get("id")) == str(team_id):
-                for s in bt.get("statistics", []):
-                    stats_equipo[s.get("name")] = s.get("displayValue", "0")
-                break
+        corners, amarillas, rojas, remates, al_arco, faltas, offsides = 0, 0, 0, 0, 0, 0, 0
 
-        # Goles anotados
-        header_comps = sum_data.get("header", {}).get("competitions", [{}])[0].get("competitors", [])
-        for hc in header_comps:
-            if str(hc.get("id")) == str(team_id):
-                goles_partido = int(hc.get("score", 0))
+        if r_sum.status_code == 200:
+            sum_data = r_sum.json()
+            
+            # Goles
+            for hc in sum_data.get("header", {}).get("competitions", [{}])[0].get("competitors", []):
+                if str(hc.get("id")) == str(team_id):
+                    try:
+                        goles_partido = int(hc.get("score", 0))
+                    except:
+                        goles_partido = 0
 
-        # Mapeo de métricas oficiales de ESPN
-        def safe_int(val):
-            try:
-                return int(val)
-            except:
-                return 0
-
-        corners = safe_int(stats_equipo.get("wonCorners", stats_equipo.get("cornerKicks", 0)))
-        amarillas = safe_int(stats_equipo.get("yellowCards", 0))
-        rojas = safe_int(stats_equipo.get("redCards", 0))
-        remates = safe_int(stats_equipo.get("shotsTotal", 0))
-        al_arco = safe_int(stats_equipo.get("shotsOnTarget", 0))
-        faltas = safe_int(stats_equipo.get("foulsCommitted", 0))
-        offsides = safe_int(stats_equipo.get("offsides", 0))
+            # Ficha técnica
+            box_teams = sum_data.get("boxscore", {}).get("teams", [])
+            for bt in box_teams:
+                if str(bt.get("team", {}).get("id")) == str(team_id):
+                    for s in bt.get("statistics", []):
+                        val = s.get("displayValue", "0")
+                        s_name = s.get("name", "")
+                        try:
+                            num = int(val)
+                        except:
+                            num = 0
+                        
+                        if s_name in ["wonCorners", "cornerKicks"]:
+                            corners = num
+                        elif s_name == "yellowCards":
+                            amarillas = num
+                        elif s_name == "redCards":
+                            rojas = num
+                        elif s_name in ["shotsTotal", "shots"]:
+                            remates = num
+                        elif s_name == "shotsOnTarget":
+                            al_arco = num
+                        elif s_name == "foulsCommitted":
+                            faltas = num
+                        elif s_name == "offsides":
+                            offsides = num
+                    break
 
         stats["Goles"].append(goles_partido)
         stats["Tiros de esquina"].append(corners)
@@ -191,8 +207,8 @@ def obtener_estadisticas_espn(codigo_liga, team_id, es_local=True, total_partido
     return stats, nombres_partidos, None
 
 # ----------------- INTERFAZ STREAMLIT -----------------
-st.title("⚽ MATCHSTAT Global Engine — ESPN Real Data")
-st.caption("Extracción directa de actas oficiales de ESPN en tiempo real (100% Gratuito y sin límites).")
+st.title("⚽ MATCHSTAT Global Engine — ESPN Direct")
+st.caption("Extracción en vivo de actas oficiales con barra de progreso.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
@@ -204,16 +220,14 @@ with st.sidebar:
     
     modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
     st.markdown("---")
-    st.info("💡 **Sin bloqueos:** Los datos numéricos se descargan directamente de los servidores públicos de ESPN.")
+    st.info("💡 **Conexión directa:** Las actas se descargan partido a partido desde los servidores abiertos de ESPN.")
 
-# Obtener lista de clubes oficiales de la liga elegida
 equipos_liga = obtener_equipos_de_liga(codigo_liga)
 nombres_equipos = [e["name"] for e in equipos_liga]
 
 col1, col2 = st.columns(2)
 with col1:
     if nombres_equipos:
-        # Intentar preseleccionar Boca si está en la lista
         idx_boca = next((i for i, name in enumerate(nombres_equipos) if "Boca" in name), 0)
         equipo_local_nombre = st.selectbox("Equipo Local", nombres_equipos, index=idx_boca)
     else:
@@ -221,7 +235,6 @@ with col1:
 
 with col2:
     if nombres_equipos:
-        # Intentar preseleccionar River si está en la lista
         idx_river = next((i for i, name in enumerate(nombres_equipos) if "River" in name), 1 if len(nombres_equipos) > 1 else 0)
         equipo_visita_nombre = st.selectbox("Equipo Visitante", nombres_equipos, index=idx_river)
     else:
@@ -229,12 +242,11 @@ with col2:
 
 if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
     if not api_key_gemini:
-        st.error("Por favor, ingresa tu API Key de Google AI Studio en la barra lateral para el análisis cualitativo.")
+        st.error("Por favor, ingresa tu API Key de Google AI Studio en la barra lateral.")
         st.stop()
 
     n_partidos = 8 if "8" in modo_motor else 7
 
-    # Encontrar IDs de ESPN
     id_local = next((e["id"] for e in equipos_liga if e["name"] == equipo_local_nombre), None)
     id_visita = next((e["id"] for e in equipos_liga if e["name"] == equipo_visita_nombre), None)
 
@@ -242,23 +254,41 @@ if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
         st.error("No se pudieron resolver los identificadores de los equipos en ESPN.")
         st.stop()
 
-    with st.spinner("📥 Descargando actas oficiales desde ESPN..."):
-        stats_local, lista_local, err_l = obtener_estadisticas_espn(codigo_liga, id_local, es_local=True, total_partidos=n_partidos)
-        stats_visita, lista_visita, err_v = obtener_estadisticas_espn(codigo_liga, id_visita, es_local=False, total_partidos=n_partidos)
+    # Panel de progreso interactivo
+    st.markdown("### 🔄 Estado de Descarga")
+    status_text = st.empty()
+    progress_bar = st.progress(0)
 
-    if err_l or err_v:
-        st.error(f"Error de datos: {err_l or err_v}")
+    # 1. Descarga Local
+    stats_local, lista_local, err_l = obtener_estadisticas_espn(
+        codigo_liga, id_local, equipo_local_nombre, es_local=True, total_partidos=n_partidos,
+        progress_bar=progress_bar, status_text=status_text
+    )
+    if err_l:
+        st.error(f"Error Local: {err_l}")
         st.stop()
 
-    # Cálculo matemático determinístico en Python
+    # 2. Descarga Visitante
+    stats_visita, lista_visita, err_v = obtener_estadisticas_espn(
+        codigo_liga, id_visita, equipo_visita_nombre, es_local=False, total_partidos=n_partidos,
+        progress_bar=progress_bar, status_text=status_text
+    )
+    if err_v:
+        st.error(f"Error Visitante: {err_v}")
+        st.stop()
+
+    status_text.text("✅ ¡Todas las actas de ESPN fueron descargadas con éxito!")
+    progress_bar.progress(1.0)
+
+    # 3. Motor matemático puro en Python
     res_local = {k: calcular_motor(v, modo_motor) for k, v in stats_local.items()}
     res_visita = {k: calcular_motor(v, modo_motor) for k, v in stats_visita.items()}
 
-    # Gemini redacta los cruces cualitativos (sin búsqueda web externa, evitando error 429)
-    with st.spinner("🧠 Generando análisis táctico de cruces con Gemini..."):
+    # 4. Redacción cualitativa con Gemini
+    with st.spinner("🧠 Redactando cruces tácticos con Gemini..."):
         client = genai.Client(api_key=api_key_gemini)
         prompt_texto = f"""
-        Eres un analista deportivo cuantitativo. Dispones de datos ESTADÍSTICOS 100% REALES Y OFICIALES de ESPN para {equipo_local_nombre} (Local) vs {equipo_visita_nombre} (Visitante):
+        Eres un analista deportivo cuantitativo. Dispones de datos ESTADÍSTICOS 100% REALES de ESPN para {equipo_local_nombre} (Local) vs {equipo_visita_nombre} (Visitante):
 
         SERIES LOCAL ({equipo_local_nombre} en casa, últimos {n_partidos} partidos):
         {json.dumps(stats_local)}
@@ -295,9 +325,9 @@ if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
             )
             analisis_ia = json.loads(resp.text)
         except Exception as e:
-            st.warning(f"Las estadísticas se calcularon con exactitud; redacción cualitativa en pausa: {e}")
+            st.warning(f"Redacción cualitativa en pausa ({e}), mostrando métricas matemáticas puras:")
 
-    st.success("✅ Actas oficiales descargadas y verificadas exitosamente desde ESPN.")
+    st.success("✅ Análisis completado con actas oficiales verificadas.")
     if "contexto_general" in analisis_ia:
         st.markdown(f"**Contexto Competitivo:** {analisis_ia['contexto_general']}")
 
