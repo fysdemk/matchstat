@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import re
+from datetime import datetime
 from google import genai
 from google.genai import types
 
@@ -62,42 +63,53 @@ def calcular_motor(valores, modo="8/5/3/1"):
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
     }
 
-# ----------------- CONECTOR ROBUSTO API-FOOTBALL -----------------
+# ----------------- CONECTOR COMPATIBLE PLAN GRATUITO -----------------
 @st.cache_data(ttl=3600)
 def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=True, total_partidos=8):
     headers = {"x-apisports-key": api_key_football.strip()}
     base_url = "https://v3.football.api-sports.io"
 
-    # 1. Buscar el equipo por coincidencia exacta o por búsqueda flexible
+    # 1. Buscar ID del equipo
     res_team = requests.get(f"{base_url}/teams?name={nombre_equipo}", headers=headers).json()
     if res_team.get("errors"):
-        return None, f"Error de autenticación API-Football: {res_team['errors']}"
+        return None, f"Error en API-Football: {res_team['errors']}"
     
     candidatos = res_team.get("response", [])
     if not candidatos:
-        # Intento de búsqueda flexible si el nombre difiere
         res_team = requests.get(f"{base_url}/teams?search={nombre_equipo}", headers=headers).json()
         candidatos = res_team.get("response", [])
 
     if not candidatos:
-        return None, f"No se encontró ningún club con el nombre '{nombre_equipo}' en la base de datos oficial."
+        return None, f"No se encontró el equipo '{nombre_equipo}' en la base oficial."
 
     team_data = candidatos[0]["team"]
     team_id = team_data["id"]
     team_nombre_oficial = team_data["name"]
 
-    # 2. Descargar los últimos 40 partidos oficiales terminados (sin el filtro conflictivo status=FT)
-    res_fix = requests.get(f"{base_url}/fixtures?team={team_id}&last=40", headers=headers).json()
-    if res_fix.get("errors"):
-        return None, f"Error al consultar partidos de {team_nombre_oficial}: {res_fix['errors']}"
+    # 2. Descargar partidos por temporada (compatible 100% con Plan Free, sin usar 'last')
+    anio_actual = datetime.now().year
+    fixtures = []
 
-    fixtures = res_fix.get("response", [])
-    if not fixtures:
-        return None, f"La API no devolvió partidos recientes para {team_nombre_oficial} (ID: {team_id})."
+    # Consulta año actual
+    res_fix = requests.get(f"{base_url}/fixtures?team={team_id}&season={anio_actual}", headers=headers).json()
+    if res_fix.get("errors") and not res_fix.get("response"):
+        return None, f"Error al consultar partidos: {res_fix['errors']}"
+    
+    fixtures.extend(res_fix.get("response", []))
 
-    # 3. Filtrar estrictamente por condición de localía
+    # Si hay pocos partidos en el año en curso, agregar el año anterior para completar la muestra
+    partidos_terminados = [f for f in fixtures if f.get("fixture", {}).get("status", {}).get("short") in ["FT", "AET", "PEN"]]
+    if len(partidos_terminados) < 20:
+        res_prev = requests.get(f"{base_url}/fixtures?team={team_id}&season={anio_actual - 1}", headers=headers).json()
+        fixtures = res_prev.get("response", []) + fixtures
+
+    # 3. Filtrar solo partidos finalizados y ordenar por fecha cronológica descendente (más recientes primero)
+    partidos_terminados = [f for f in fixtures if f.get("fixture", {}).get("status", {}).get("short") in ["FT", "AET", "PEN"]]
+    partidos_terminados.sort(key=lambda x: x["fixture"]["date"], reverse=True)
+
+    # 4. Filtrar por condición de localía
     partidos_filtrados = []
-    for f in fixtures:
+    for f in partidos_terminados:
         es_en_casa = (f["teams"]["home"]["id"] == team_id)
         if es_local and es_en_casa:
             partidos_filtrados.append(f)
@@ -109,9 +121,9 @@ def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=Tru
 
     if len(partidos_filtrados) < total_partidos:
         condicion = "local" if es_local else "visitante"
-        return None, f"Se encontraron solo {len(partidos_filtrados)} partidos de {condicion} para {team_nombre_oficial} (se requerían {total_partidos})."
+        return None, f"Se encontraron solo {len(partidos_filtrados)} partidos oficiales finalizados de {condicion} para {team_nombre_oficial}."
 
-    # Ordenar cronológicamente (del más antiguo al más reciente)
+    # Invertir para que queden ordenados del más antiguo al más reciente (8P -> P1)
     partidos_filtrados.reverse()
 
     stats_recopiladas = {
@@ -124,15 +136,15 @@ def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=Tru
         "Fueras de juego": []
     }
 
-    # 4. Extraer estadísticas oficiales de cada acta
+    # 5. Extraer estadísticas oficiales de cada acta
     for fix in partidos_filtrados:
         fix_id = fix["fixture"]["id"]
         
-        # Goles oficiales
+        # Goles
         goles = fix["goals"]["home"] if es_local else fix["goals"]["away"]
         stats_recopiladas["Goles"].append(int(goles) if goles is not None else 0)
 
-        # Ficha estadística
+        # Estadísticas del partido
         res_stat = requests.get(f"{base_url}/fixtures/statistics?fixture={fix_id}&team={team_id}", headers=headers).json()
         stats_data = res_stat.get("response", [])
         
@@ -157,8 +169,8 @@ def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=Tru
     return stats_recopiladas, None
 
 # ----------------- INTERFAZ STREAMLIT -----------------
-st.title("⚽ MATCHSTAT Engine — Datos Oficiales en Vivo")
-st.caption("Extracción directa de actas oficiales con análisis cualitativo de Gemini.")
+st.title("⚽ MATCHSTAT Engine — Datos Oficiales")
+st.caption("Plan Gratuito API-Football habilitado sin restricciones.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
@@ -172,7 +184,7 @@ with st.sidebar:
     )
     modo_motor = st.selectbox("Estructura de muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
     st.markdown("---")
-    st.info("💡 Tus datos provienen de actas oficiales de API-Sports sin margen de invento.")
+    st.info("💡 Usa consultas por temporada compatibles con la cuenta Free de API-Sports.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -187,7 +199,7 @@ if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
 
     n_partidos = 8 if "8" in modo_motor else 7
 
-    with st.spinner("📥 Conectando con API-Football y procesando actas..."):
+    with st.spinner("📥 Conectando con API-Football (modo temporada)..."):
         stats_local, err_l = obtener_datos_oficiales_equipo(api_key_football, equipo_local, es_local=True, total_partidos=n_partidos)
         stats_visita, err_v = obtener_datos_oficiales_equipo(api_key_football, equipo_visitante, es_local=False, total_partidos=n_partidos)
 
