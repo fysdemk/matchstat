@@ -69,16 +69,16 @@ def calcular_motor(valores, modo="8/5/3/1"):
     }
 
 st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Motor cuantitativo con Gemini 3.1 Pro Preview.")
+st.caption("Motor cuantitativo con Gemini Flash (Plan Gratuito Activo).")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Google AI Studio API Key", type="password")
     
-    # Nombre de modelo oficial indicado por el endpoint de tu cuenta
+    # Modelo gratuito por defecto para evitar error 429
     modelo_seleccionado = st.selectbox(
         "Modelo de Gemini",
-        ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-flash"],
+        ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.1-pro-preview"],
         index=0
     )
     
