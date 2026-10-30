@@ -1,11 +1,11 @@
 import streamlit as st
+import requests
 import json
 import re
 from google import genai
 from google.genai import types
-from duckduckgo_search import DDGS
 
-st.set_page_config(page_title="MATCHSTAT Global Engine", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="MATCHSTAT Pro Engine", page_icon="⚽", layout="wide")
 
 st.markdown("""
 <style>
@@ -22,20 +22,14 @@ st.markdown("""
     .badge-mid { background-color: #f57f17; color: #fff; padding: 3px 8px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; }
     .badge-low { background-color: #c62828; color: #fff; padding: 3px 8px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; }
     .sub-text { font-size: 0.85rem; color: #a0aec0; margin-top: 4px; }
+    .cruce-box { background-color: #151821; border-left: 3px solid #3182ce; padding: 8px 12px; margin-top: 8px; border-radius: 4px; font-size: 0.88rem; color: #e2e8f0; }
 </style>
 """, unsafe_allow_html=True)
 
-def buscar_en_la_web(query, max_res=5):
-    try:
-        results = DDGS().text(query, max_results=max_res)
-        textos = []
-        for r in results:
-            textos.append(f"Fuente: {r.get('title')}\nDetalle: {r.get('body')}")
-        return "\n---\n".join(textos) if textos else "Sin resultados específicos encontrados."
-    except Exception as e:
-        return f"Búsqueda externa no disponible: {str(e)}"
-
+# ----------------- MOTOR MATEMÁTICO PURO -----------------
 def calcular_motor(valores, modo="8/5/3/1"):
+    if not valores or len(valores) == 0:
+        return None
     tam_macro = 8 if "8" in modo else 7
     macro = valores[-tam_macro:]
     p5 = macro[-5:]
@@ -68,174 +62,204 @@ def calcular_motor(valores, modo="8/5/3/1"):
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
     }
 
-st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Motor cuantitativo oficial impulsado por Gemini 3.8 Flash.")
+# ----------------- CONECTOR REAL API-FOOTBALL -----------------
+@st.cache_data(ttl=3600)
+def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=True, total_partidos=8):
+    headers = {"x-apisports-key": api_key_football}
+    base_url = "https://v3.football.api-sports.io"
+
+    # 1. Buscar ID del equipo
+    res_team = requests.get(f"{base_url}/teams?name={nombre_equipo}", headers=headers)
+    data_team = res_team.json()
+    if not data_team.get("response"):
+        return None, f"No se encontró el equipo '{nombre_equipo}' en la base oficial."
+    
+    team_id = data_team["response"][0]["team"]["id"]
+
+    # 2. Obtener últimos partidos oficiales finalizados
+    res_fix = requests.get(f"{base_url}/fixtures?team={team_id}&last=25&status=FT", headers=headers)
+    fixtures = res_fix.json().get("response", [])
+    
+    # 3. Filtrar estrictamente por localía
+    partidos_filtrados = []
+    for f in fixtures:
+        es_en_casa = (f["teams"]["home"]["id"] == team_id)
+        if es_local and es_en_casa:
+            partidos_filtrados.append(f)
+        elif not es_local and not es_en_casa:
+            partidos_filtrados.append(f)
+        if len(partidos_filtrados) == total_partidos:
+            break
+
+    if len(partidos_filtrados) < total_partidos:
+        return None, f"Solo se encontraron {len(partidos_filtrados)} partidos oficiales con la condición requerida."
+
+    # Invertir para orden cronológico (más antiguo a más reciente)
+    partidos_filtrados.reverse()
+
+    stats_recopiladas = {
+        "Goles": [],
+        "Tiros de esquina": [],
+        "Tarjetas": [],
+        "Remates totales": [],
+        "Tiros al arco": [],
+        "Faltas cometidas": [],
+        "Fueras de juego": []
+    }
+
+    # 4. Extraer estadísticas oficiales de cada partido
+    for fix in partidos_filtrados:
+        fix_id = fix["fixture"]["id"]
+        # Goles
+        goles = fix["goals"]["home"] if es_local else fix["goals"]["away"]
+        stats_recopiladas["Goles"].append(goles if goles is not None else 0)
+
+        # Estadísticas del partido
+        res_stat = requests.get(f"{base_url}/fixtures/statistics?fixture={fix_id}&team={team_id}", headers=headers)
+        stats_data = res_stat.json().get("response", [])
+        
+        c_corners, c_yellow, c_red, c_shots, c_target, c_fouls, c_offs = 0, 0, 0, 0, 0, 0, 0
+        if stats_data:
+            raw_stats = {item["type"]: item["value"] for item in stats_data[0].get("statistics", [])}
+            c_corners = raw_stats.get("Corner Kicks") or 0
+            c_yellow = raw_stats.get("Yellow Cards") or 0
+            c_red = raw_stats.get("Red Cards") or 0
+            c_shots = raw_stats.get("Total Shots") or 0
+            c_target = raw_stats.get("Shots on Goal") or 0
+            c_fouls = raw_stats.get("Fouls") or 0
+            c_offs = raw_stats.get("Offsides") or 0
+
+        stats_recopiladas["Tiros de esquina"].append(c_corners)
+        stats_recopiladas["Tarjetas"].append(c_yellow + c_red)
+        stats_recopiladas["Remates totales"].append(c_shots)
+        stats_recopiladas["Tiros al arco"].append(c_target)
+        stats_recopiladas["Faltas cometidas"].append(c_fouls)
+        stats_recopiladas["Fueras de juego"].append(c_offs)
+
+    return stats_recopiladas, None
+
+# ----------------- INTERFAZ STREAMLIT -----------------
+st.title("⚽ MATCHSTAT Engine — Datos Oficiales Auditados")
+st.caption("Cero alucinaciones: Métricas de actas oficiales con análisis de IA.")
 
 with st.sidebar:
-    st.header("⚙️ Configuración")
-    api_key = st.text_input("Google AI Studio API Key", type="password")
-    
-    # Lista predeterminada con el modelo oficial gemini-3.8-flash
-    opciones_modelos = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"]
-    
-    # Detección dinámica automática si hay API Key
-    if api_key:
-        try:
-            client_detect = genai.Client(api_key=api_key)
-            modelos_cuenta = [
-                m.name.replace("models/", "") 
-                for m in client_detect.models.list() 
-                if "generateContent" in m.supported_actions
-            ]
-            if modelos_cuenta:
-                # Priorizar gemini-3.8-flash si está en la lista
-                if "gemini-3.8-flash" in modelos_cuenta:
-                    modelos_cuenta.remove("gemini-3.8-flash")
-                    opciones_modelos = ["gemini-3.8-flash"] + modelos_cuenta
-                else:
-                    opciones_modelos = modelos_cuenta
-        except Exception:
-            pass
+    st.header("⚙️ Configuración de APIs")
+    api_key_football = st.text_input("API-Football Key (api-sports.io)", type="password")
+    api_key_gemini = st.text_input("Google AI Studio API Key", type="password")
+    modelo_gemini = st.selectbox("Modelo para redacción táctica", ["gemini-3.8-flash", "gemini-2.5-flash"], index=0)
+    modo_motor = st.selectbox("Estructura de muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
+    st.markdown("---")
+    st.info("📌 **API-Football** provee los números oficiales en tiempo real. **Gemini** solo analiza y redacta los cruces.")
 
-    modelo_seleccionado = st.selectbox("Modelo de Gemini", opciones_modelos, index=0)
-    modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar puro)"])
-
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 with col1:
-    equipo_local = st.text_input("Equipo Local", value="Boca Juniors")
+    equipo_local = st.text_input("Equipo Local (nombre oficial)", value="Boca Juniors")
 with col2:
-    equipo_visitante = st.text_input("Equipo Visitante", value="River Plate")
-with col3:
-    competicion = st.text_input("Competición / Liga", value="Liga Profesional Argentina")
+    equipo_visitante = st.text_input("Equipo Visitante (nombre oficial)", value="River Plate")
 
-if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
-    if not api_key:
-        st.error("Por favor, ingresa tu API Key de Google AI Studio en la barra lateral.")
+if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
+    if not api_key_football or not api_key_gemini:
+        st.error("Debes ingresar tanto tu clave de API-Football como la de Google AI Studio en la barra lateral.")
         st.stop()
 
     n_partidos = 8 if "8" in modo_motor else 7
-    client = genai.Client(api_key=api_key)
 
-    with st.spinner("🌐 Rastreando fichas oficiales en la web en vivo..."):
-        q_local = f"{equipo_local} ultimos partidos local estadisticas goles corners tarjetas remates {competicion}"
-        q_visita = f"{equipo_visitante} ultimos partidos visitante estadisticas goles corners tarjetas remates {competicion}"
+    with st.spinner("📥 Descargando actas de juego oficiales desde API-Football..."):
+        stats_local, err_l = obtener_datos_oficiales_equipo(api_key_football, equipo_local, es_local=True, total_partidos=n_partidos)
+        stats_visita, err_v = obtener_datos_oficiales_equipo(api_key_football, equipo_visitante, es_local=False, total_partidos=n_partidos)
+
+    if err_l or err_v:
+        st.error(f"Error de datos: {err_l or err_v}")
+        st.stop()
+
+    # 1. Cálculo matemático garantizado en Python
+    resultados_local = {k: calcular_motor(v, modo_motor) for k, v in stats_local.items()}
+    resultados_visita = {k: calcular_motor(v, modo_motor) for k, v in stats_visita.items()}
+
+    # 2. Gemini redacta los cruces a partir de los datos verificados
+    with st.spinner("🧠 Generando análisis táctico y cruces estadísticos..."):
+        client_gemini = genai.Client(api_key=api_key_gemini)
         
-        datos_web_local = buscar_en_la_web(q_local, max_res=5)
-        datos_web_visita = buscar_en_la_web(q_visita, max_res=5)
+        prompt_cualitativo = f"""
+        Eres un analista deportivo cuantitativo. Dispones de datos ESTADÍSTICOS 100% REALES Y YA CALCULADOS para el partido {equipo_local} (Local) vs {equipo_visitante} (Visitante):
 
-    with st.spinner(f"⚡ Procesando métricas con {modelo_seleccionado}..."):
-        prompt = f"""
-        Eres un analista cuantitativo de fútbol de élite. Tu tarea es extraer con rigor matemático absoluto las estadísticas de partidos oficiales recientes.
+        SERIES LOCAL ({equipo_local} en casa, últimos {n_partidos} partidos):
+        {json.dumps(stats_local)}
 
-        DATOS LOCAL ({equipo_local} en casa):
-        {datos_web_local}
+        SERIES VISITANTE ({equipo_visitante} fuera, últimos {n_partidos} partidos):
+        {json.dumps(stats_visita)}
 
-        DATOS VISITANTE ({equipo_visitante} fuera):
-        {datos_web_visita}
+        REGLA ESTRICTA:
+        Está TERMINANTEMENTE PROHIBIDO inventar o alterar cualquier número o porcentaje. 
+        Tu labor consiste ÚNICAMENTE en redactar:
+        1. "contexto_general": 2 frases sobre la actualidad deportiva real de ambos clubes.
+        2. "cruces_local": Para cada una de las estadísticas provistas, 1 frase de cruce estadístico evaluando cómo interactúa la producción del Local con el comportamiento del Visitante, asignando una clasificación visual (🟢 Alta consistencia, 🟡 Moderada, 🔴 Baja consistencia).
 
-        Con base en los datos web anteriores y tus registros estadísticos oficiales verificados para {equipo_local} vs {equipo_visitante} en {competicion}, extrae las series de los últimos {n_partidos} partidos oficiales:
-        1. LOCAL ({equipo_local}) jugando realmente en CASA (estadio local).
-        2. VISITANTE ({equipo_visitante}) jugando realmente FUERA (a domicilio).
-
-        Entrega listas de exactamente {n_partidos} enteros reales ordenados cronológicamente de más antiguo a más reciente para:
-        1. Goles
-        2. Tiros de esquina
-        3. Tarjetas
-        4. Remates totales
-        5. Tiros al arco
-        6. Faltas cometidas
-        7. Fueras de juego
-        8. Saques de meta
-        9. Tackles
-
-        Devuelve ÚNICAMENTE un JSON con esta estructura exacta, sin texto adicional:
+        Devuelve ÚNICAMENTE un JSON con esta estructura:
         {{
-          "contexto": "Breve síntesis de 2 frases sobre la dinámica real de ambos equipos.",
-          "local": {{
-            "nombre": "{equipo_local}",
-            "stats": {{
-              "Goles": [{n_partidos} enteros],
-              "Tiros de esquina": [{n_partidos} enteros],
-              "Tarjetas": [{n_partidos} enteros],
-              "Remates totales": [{n_partidos} enteros],
-              "Tiros al arco": [{n_partidos} enteros],
-              "Faltas cometidas": [{n_partidos} enteros],
-              "Fueras de juego": [{n_partidos} enteros],
-              "Saques de meta": [{n_partidos} enteros],
-              "Tackles": [{n_partidos} enteros]
-            }}
-          }},
-          "visitante": {{
-            "nombre": "{equipo_visitante}",
-            "stats": {{
-              "Goles": [{n_partidos} enteros],
-              "Tiros de esquina": [{n_partidos} enteros],
-              "Tarjetas": [{n_partidos} enteros],
-              "Remates totales": [{n_partidos} enteros],
-              "Tiros al arco": [{n_partidos} enteros],
-              "Faltas cometidas": [{n_partidos} enteros],
-              "Fueras de juego": [{n_partidos} enteros],
-              "Saques de meta": [{n_partidos} enteros],
-              "Tackles": [{n_partidos} enteros]
-            }}
+          "contexto_general": "...",
+          "cruces_local": {{
+            "Goles": "...",
+            "Tiros de esquina": "...",
+            "Tarjetas": "...",
+            "Remates totales": "...",
+            "Tiros al arco": "...",
+            "Faltas cometidas": "...",
+            "Fueras de juego": "..."
           }}
         }}
         """
 
+        analisis_ia = {}
         try:
-            response = client.models.generate_content(
-                model=modelo_seleccionado,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1
-                )
+            resp = client_gemini.models.generate_content(
+                model=modelo_gemini,
+                contents=prompt_cualitativo,
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
             )
-
-            raw_text = response.text
-            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-            if not match:
-                st.error("No se pudo estructurar el JSON. Inténtalo nuevamente.")
-                st.stop()
-            
-            data = json.loads(match.group(0))
-
-            st.success(f"✅ Métricas verificadas exitosamente con {modelo_seleccionado}.")
-            st.markdown(f"**Contexto Competitivo:** {data.get('contexto', '')}")
-
-            tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
-
-            def render_equipo(datos_equipo, es_local=True):
-                stats = datos_equipo["stats"]
-                for nombre_stat, valores in stats.items():
-                    res = calcular_motor(valores, modo_motor)
-                    pct_macro = res["pct_prin"][0]
-                    badge_class = "badge-solid" if pct_macro >= 80 else ("badge-mid" if pct_macro >= 50 else "badge-low")
-
-                    st.markdown(f"""
-                    <div class="stat-card">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span class="stat-title">{nombre_stat}</span>
-                            <span class="{badge_class}">Principal: Más de {res['u_prin']} ({pct_macro}%)</span>
-                        </div>
-                        <div class="sub-text">
-                            <b>Serie:</b> {res['macro']} | <b>P1:</b> {res['p1']}
-                        </div>
-                        <div style="margin-top: 6px;">
-                            <b>Prom:</b> {res['prom']} | <b>Mediana:</b> {res['med']} | <b>Mín:</b> {res['min']} | <b>Máx:</b> {res['max']}
-                        </div>
-                        <div style="margin-top: 6px; font-size: 0.88rem;">
-                            🔹 <b>Suelo (Más de {res['u_min']}):</b> {res['pct_min'][0]}% Macro · {res['pct_min'][1]}% 5P · {res['pct_min'][2]}% 3P<br>
-                            🔸 <b>Línea Principal (Más de {res['u_prin']}):</b> {res['pct_prin'][0]}% Macro · {res['pct_prin'][1]}% 5P · {res['pct_prin'][2]}% 3P
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            with tab_local:
-                render_equipo(data["local"], es_local=True)
-
-            with tab_visita:
-                render_equipo(data["visitante"], es_local=False)
-
+            analisis_ia = json.loads(resp.text)
         except Exception as e:
-            st.error(f"Error procesando los datos: {str(e)}")
+            st.warning(f"No se pudo generar el texto de IA, mostrando métricas numéricas puras: {e}")
+
+    st.success("✅ Actas oficiales descargadas y auditadas correctamente.")
+    if "contexto_general" in analisis_ia:
+        st.markdown(f"**Contexto Competitivo:** {analisis_ia['contexto_general']}")
+
+    tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
+
+    def render_panel(resultados, cruces=None):
+        for nombre_stat, res in resultados.items():
+            if not res:
+                continue
+            pct_macro = res["pct_prin"][0]
+            badge_class = "badge-solid" if pct_macro >= 80 else ("badge-mid" if pct_macro >= 50 else "badge-low")
+
+            cruce_html = ""
+            if cruces and nombre_stat in cruces:
+                cruce_html = f"<div class='cruce-box'>⚔️ <b>Cruce:</b> {cruces[nombre_stat]}</div>"
+
+            st.markdown(f"""
+            <div class="stat-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span class="stat-title">{nombre_stat}</span>
+                    <span class="{badge_class}">Principal: Más de {res['u_prin']} ({pct_macro}%)</span>
+                </div>
+                <div class="sub-text">
+                    <b>Valores reales 8P:</b> {res['macro']} | <b>P1:</b> {res['p1']}
+                </div>
+                <div style="margin-top: 6px;">
+                    <b>Prom:</b> {res['prom']} | <b>Mediana:</b> {res['med']} | <b>Mín:</b> {res['min']} | <b>Máx:</b> {res['max']}
+                </div>
+                <div style="margin-top: 6px; font-size: 0.88rem;">
+                    🔹 <b>Suelo (Más de {res['u_min']}):</b> {res['pct_min'][0]}% Macro · {res['pct_min'][1]}% 5P · {res['pct_min'][2]}% 3P<br>
+                    🔸 <b>Línea Principal (Más de {res['u_prin']}):</b> {res['pct_prin'][0]}% Macro · {res['pct_prin'][1]}% 5P · {res['pct_prin'][2]}% 3P
+                </div>
+                {cruce_html}
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab_local:
+        render_panel(resultados_local, analisis_ia.get("cruces_local"))
+
+    with tab_visita:
+        render_panel(resultados_visita)
