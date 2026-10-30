@@ -1,4 +1,3 @@
 streamlit
+requests
 google-genai
-pandas
-duckduckgo_search
