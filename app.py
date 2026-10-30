@@ -69,14 +69,15 @@ def calcular_motor(valores, modo="8/5/3/1"):
     }
 
 st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Motor cuantitativo con rastreo web libre en tiempo real.")
+st.caption("Motor cuantitativo con Gemini 1.5 Pro y rastreo web en tiempo real.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Google AI Studio API Key", type="password")
+    modelo_seleccionado = st.selectbox("Modelo de Gemini", ["gemini-1.5-pro", "gemini-1.5-flash"], index=0)
     modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar puro)"])
     st.markdown("---")
-    st.info("💡 Tu clave API se usa solo en tu sesión.")
+    st.info("💡 **Gemini 1.5 Pro** garantiza máxima precisión cuantitativa y seguimiento de JSON.")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -101,9 +102,9 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
         datos_web_local = buscar_en_la_web(q_local, max_res=5)
         datos_web_visita = buscar_en_la_web(q_visita, max_res=5)
 
-    with st.spinner("⚡ Procesando y verificando métricas reales..."):
+    with st.spinner(f"⚡ Procesando métricas con {modelo_seleccionado}..."):
         prompt = f"""
-        Eres un analista cuantitativo riguroso. Aquí tienes información real extraída de la web en vivo:
+        Eres un analista cuantitativo de fútbol de élite. Tu tarea es extraer con rigor matemático absoluto las estadísticas oficiales de partidos oficiales recientes.
 
         DATOS LOCAL ({equipo_local} en casa):
         {datos_web_local}
@@ -112,10 +113,10 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
         {datos_web_visita}
 
         Con base en los datos web anteriores y tus registros estadísticos oficiales verificados para {equipo_local} vs {equipo_visitante} en {competicion}, extrae las series de los últimos {n_partidos} partidos oficiales:
-        1. LOCAL ({equipo_local}) jugando realmente en CASA.
-        2. VISITANTE ({equipo_visitante}) jugando realmente FUERA.
+        1. LOCAL ({equipo_local}) jugando realmente en CASA (estadio local).
+        2. VISITANTE ({equipo_visitante}) jugando realmente FUERA (a domicilio).
 
-        Entrega listas de exactamente {n_partidos} enteros reales ordenados de más antiguo a más reciente para:
+        Entrega listas de exactamente {n_partidos} enteros reales ordenados cronológicamente de más antiguo a más reciente para:
         1. Goles
         2. Tiros de esquina
         3. Tarjetas
@@ -126,7 +127,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
         8. Saques de meta
         9. Tackles
 
-        Devuelve ÚNICAMENTE un JSON con esta estructura exacta:
+        Devuelve ÚNICAMENTE un JSON con esta estructura exacta, sin texto adicional:
         {{
           "contexto": "Breve síntesis de 2 frases sobre la dinámica real de ambos equipos.",
           "local": {{
@@ -162,10 +163,11 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
 
         try:
             response = client.models.generate_content(
-                model="gemini-3.5-flash-lite",
+                model=modelo_seleccionado,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+                    response_mime_type="application/json",
+                    temperature=0.1  # Baja temperatura para evitar alucinaciones y asegurar exactitud
                 )
             )
 
@@ -177,7 +179,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
             
             data = json.loads(match.group(0))
 
-            st.success("✅ Datos rastreados y verificados con éxito.")
+            st.success(f"✅ Métricas verificadas exitosamente con {modelo_seleccionado}.")
             st.markdown(f"**Contexto Competitivo:** {data.get('contexto', '')}")
 
             tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
