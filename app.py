@@ -31,9 +31,9 @@ def buscar_en_la_web(query, max_res=5):
         textos = []
         for r in results:
             textos.append(f"Fuente: {r.get('title')}\nDetalle: {r.get('body')}")
-        return "\n---\n".join(textos)
+        return "\n---\n".join(textos) if textos else "Sin resultados específicos encontrados."
     except Exception as e:
-        return f"Sin resultados directos: {str(e)}"
+        return f"Búsqueda externa no disponible: {str(e)}"
 
 def calcular_motor(valores, modo="8/5/3/1"):
     tam_macro = 8 if "8" in modo else 7
@@ -69,15 +69,31 @@ def calcular_motor(valores, modo="8/5/3/1"):
     }
 
 st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Motor cuantitativo con Gemini 1.5 Pro y rastreo web en tiempo real.")
+st.caption("Motor cuantitativo oficial impulsado por Gemini 2.5 Pro.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Google AI Studio API Key", type="password")
-    modelo_seleccionado = st.selectbox("Modelo de Gemini", ["gemini-1.5-pro", "gemini-1.5-flash"], index=0)
+    
+    # Modelos actualizados compatibles con la versión v1beta de la API
+    modelo_seleccionado = st.selectbox(
+        "Modelo de Gemini",
+        ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        index=0
+    )
+    
     modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar puro)"])
+    
     st.markdown("---")
-    st.info("💡 **Gemini 1.5 Pro** garantiza máxima precisión cuantitativa y seguimiento de JSON.")
+    if api_key and st.checkbox("🔍 Diagnóstico: Listar modelos de mi clave"):
+        try:
+            temp_client = genai.Client(api_key=api_key)
+            st.write("Modelos disponibles:")
+            for m in temp_client.models.list():
+                if "generateContent" in m.supported_actions:
+                    st.code(m.name.replace("models/", ""))
+        except Exception as err:
+            st.error(f"Error consultando modelos: {err}")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -95,7 +111,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
     n_partidos = 8 if "8" in modo_motor else 7
     client = genai.Client(api_key=api_key)
 
-    with st.spinner("🌐 Rastreando fichas oficiales en la web libre..."):
+    with st.spinner("🌐 Rastreando fichas oficiales en la web en vivo..."):
         q_local = f"{equipo_local} ultimos partidos local estadisticas goles corners tarjetas remates {competicion}"
         q_visita = f"{equipo_visitante} ultimos partidos visitante estadisticas goles corners tarjetas remates {competicion}"
         
@@ -104,7 +120,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
 
     with st.spinner(f"⚡ Procesando métricas con {modelo_seleccionado}..."):
         prompt = f"""
-        Eres un analista cuantitativo de fútbol de élite. Tu tarea es extraer con rigor matemático absoluto las estadísticas oficiales de partidos oficiales recientes.
+        Eres un analista cuantitativo de fútbol de élite. Tu tarea es extraer con rigor matemático absoluto las estadísticas de partidos oficiales recientes.
 
         DATOS LOCAL ({equipo_local} en casa):
         {datos_web_local}
@@ -127,7 +143,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
         8. Saques de meta
         9. Tackles
 
-        Devuelve ÚNICAMENTE un JSON con esta estructura exacta, sin texto adicional:
+        Devuelve ÚNICAMENTE un JSON con esta estructura exacta, sin texto adicional ni formato markdown:
         {{
           "contexto": "Breve síntesis de 2 frases sobre la dinámica real de ambos equipos.",
           "local": {{
@@ -167,7 +183,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    temperature=0.1  # Baja temperatura para evitar alucinaciones y asegurar exactitud
+                    temperature=0.1
                 )
             )
 
