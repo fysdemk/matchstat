@@ -62,25 +62,40 @@ def calcular_motor(valores, modo="8/5/3/1"):
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
     }
 
-# ----------------- CONECTOR REAL API-FOOTBALL -----------------
+# ----------------- CONECTOR ROBUSTO API-FOOTBALL -----------------
 @st.cache_data(ttl=3600)
 def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=True, total_partidos=8):
-    headers = {"x-apisports-key": api_key_football}
+    headers = {"x-apisports-key": api_key_football.strip()}
     base_url = "https://v3.football.api-sports.io"
 
-    # 1. Buscar ID del equipo
-    res_team = requests.get(f"{base_url}/teams?name={nombre_equipo}", headers=headers)
-    data_team = res_team.json()
-    if not data_team.get("response"):
-        return None, f"No se encontró el equipo '{nombre_equipo}' en la base oficial."
+    # 1. Buscar el equipo por coincidencia exacta o por búsqueda flexible
+    res_team = requests.get(f"{base_url}/teams?name={nombre_equipo}", headers=headers).json()
+    if res_team.get("errors"):
+        return None, f"Error de autenticación API-Football: {res_team['errors']}"
     
-    team_id = data_team["response"][0]["team"]["id"]
+    candidatos = res_team.get("response", [])
+    if not candidatos:
+        # Intento de búsqueda flexible si el nombre difiere
+        res_team = requests.get(f"{base_url}/teams?search={nombre_equipo}", headers=headers).json()
+        candidatos = res_team.get("response", [])
 
-    # 2. Obtener últimos partidos oficiales finalizados
-    res_fix = requests.get(f"{base_url}/fixtures?team={team_id}&last=25&status=FT", headers=headers)
-    fixtures = res_fix.json().get("response", [])
-    
-    # 3. Filtrar estrictamente por localía
+    if not candidatos:
+        return None, f"No se encontró ningún club con el nombre '{nombre_equipo}' en la base de datos oficial."
+
+    team_data = candidatos[0]["team"]
+    team_id = team_data["id"]
+    team_nombre_oficial = team_data["name"]
+
+    # 2. Descargar los últimos 40 partidos oficiales terminados (sin el filtro conflictivo status=FT)
+    res_fix = requests.get(f"{base_url}/fixtures?team={team_id}&last=40", headers=headers).json()
+    if res_fix.get("errors"):
+        return None, f"Error al consultar partidos de {team_nombre_oficial}: {res_fix['errors']}"
+
+    fixtures = res_fix.get("response", [])
+    if not fixtures:
+        return None, f"La API no devolvió partidos recientes para {team_nombre_oficial} (ID: {team_id})."
+
+    # 3. Filtrar estrictamente por condición de localía
     partidos_filtrados = []
     for f in fixtures:
         es_en_casa = (f["teams"]["home"]["id"] == team_id)
@@ -88,13 +103,15 @@ def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=Tru
             partidos_filtrados.append(f)
         elif not es_local and not es_en_casa:
             partidos_filtrados.append(f)
+            
         if len(partidos_filtrados) == total_partidos:
             break
 
     if len(partidos_filtrados) < total_partidos:
-        return None, f"Solo se encontraron {len(partidos_filtrados)} partidos oficiales con la condición requerida."
+        condicion = "local" if es_local else "visitante"
+        return None, f"Se encontraron solo {len(partidos_filtrados)} partidos de {condicion} para {team_nombre_oficial} (se requerían {total_partidos})."
 
-    # Invertir para orden cronológico (más antiguo a más reciente)
+    # Ordenar cronológicamente (del más antiguo al más reciente)
     partidos_filtrados.reverse()
 
     stats_recopiladas = {
@@ -107,16 +124,17 @@ def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=Tru
         "Fueras de juego": []
     }
 
-    # 4. Extraer estadísticas oficiales de cada partido
+    # 4. Extraer estadísticas oficiales de cada acta
     for fix in partidos_filtrados:
         fix_id = fix["fixture"]["id"]
-        # Goles
+        
+        # Goles oficiales
         goles = fix["goals"]["home"] if es_local else fix["goals"]["away"]
-        stats_recopiladas["Goles"].append(goles if goles is not None else 0)
+        stats_recopiladas["Goles"].append(int(goles) if goles is not None else 0)
 
-        # Estadísticas del partido
-        res_stat = requests.get(f"{base_url}/fixtures/statistics?fixture={fix_id}&team={team_id}", headers=headers)
-        stats_data = res_stat.json().get("response", [])
+        # Ficha estadística
+        res_stat = requests.get(f"{base_url}/fixtures/statistics?fixture={fix_id}&team={team_id}", headers=headers).json()
+        stats_data = res_stat.get("response", [])
         
         c_corners, c_yellow, c_red, c_shots, c_target, c_fouls, c_offs = 0, 0, 0, 0, 0, 0, 0
         if stats_data:
@@ -129,59 +147,67 @@ def obtener_datos_oficiales_equipo(api_key_football, nombre_equipo, es_local=Tru
             c_fouls = raw_stats.get("Fouls") or 0
             c_offs = raw_stats.get("Offsides") or 0
 
-        stats_recopiladas["Tiros de esquina"].append(c_corners)
-        stats_recopiladas["Tarjetas"].append(c_yellow + c_red)
-        stats_recopiladas["Remates totales"].append(c_shots)
-        stats_recopiladas["Tiros al arco"].append(c_target)
-        stats_recopiladas["Faltas cometidas"].append(c_fouls)
-        stats_recopiladas["Fueras de juego"].append(c_offs)
+        stats_recopiladas["Tiros de esquina"].append(int(c_corners))
+        stats_recopiladas["Tarjetas"].append(int(c_yellow) + int(c_red))
+        stats_recopiladas["Remates totales"].append(int(c_shots))
+        stats_recopiladas["Tiros al arco"].append(int(c_target))
+        stats_recopiladas["Faltas cometidas"].append(int(c_fouls))
+        stats_recopiladas["Fueras de juego"].append(int(c_offs))
 
     return stats_recopiladas, None
 
 # ----------------- INTERFAZ STREAMLIT -----------------
-st.title("⚽ MATCHSTAT Engine — Datos Oficiales Auditados")
-st.caption("Cero alucinaciones: Métricas de actas oficiales con análisis de IA.")
+st.title("⚽ MATCHSTAT Engine — Datos Oficiales en Vivo")
+st.caption("Extracción directa de actas oficiales con análisis cualitativo de Gemini.")
 
 with st.sidebar:
-    st.header("⚙️ Configuración de APIs")
-    api_key_football = st.text_input("API-Football Key (api-sports.io)", type="password")
+    st.header("⚙️ Configuración")
+    api_key_football = st.text_input("API-Football Key", type="password")
     api_key_gemini = st.text_input("Google AI Studio API Key", type="password")
-    modelo_gemini = st.selectbox("Modelo para redacción táctica", ["gemini-3.8-flash", "gemini-2.5-flash"], index=0)
+    
+    modelo_gemini = st.selectbox(
+        "Modelo de Gemini (Texto)",
+        ["gemini-3.8-flash", "gemini-2.5-flash"],
+        index=0
+    )
     modo_motor = st.selectbox("Estructura de muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
     st.markdown("---")
-    st.info("📌 **API-Football** provee los números oficiales en tiempo real. **Gemini** solo analiza y redacta los cruces.")
+    st.info("💡 Tus datos provienen de actas oficiales de API-Sports sin margen de invento.")
 
 col1, col2 = st.columns(2)
 with col1:
-    equipo_local = st.text_input("Equipo Local (nombre oficial)", value="Boca Juniors")
+    equipo_local = st.text_input("Equipo Local", value="Boca Juniors")
 with col2:
-    equipo_visitante = st.text_input("Equipo Visitante (nombre oficial)", value="River Plate")
+    equipo_visitante = st.text_input("Equipo Visitante", value="River Plate")
 
 if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
     if not api_key_football or not api_key_gemini:
-        st.error("Debes ingresar tanto tu clave de API-Football como la de Google AI Studio en la barra lateral.")
+        st.error("Por favor, ingresa tanto tu clave de API-Football como la de Gemini en la barra lateral.")
         st.stop()
 
     n_partidos = 8 if "8" in modo_motor else 7
 
-    with st.spinner("📥 Descargando actas de juego oficiales desde API-Football..."):
+    with st.spinner("📥 Conectando con API-Football y procesando actas..."):
         stats_local, err_l = obtener_datos_oficiales_equipo(api_key_football, equipo_local, es_local=True, total_partidos=n_partidos)
         stats_visita, err_v = obtener_datos_oficiales_equipo(api_key_football, equipo_visitante, es_local=False, total_partidos=n_partidos)
 
-    if err_l or err_v:
-        st.error(f"Error de datos: {err_l or err_v}")
+    if err_l:
+        st.error(f"Error Local ({equipo_local}): {err_l}")
+        st.stop()
+    if err_v:
+        st.error(f"Error Visitante ({equipo_visitante}): {err_v}")
         st.stop()
 
-    # 1. Cálculo matemático garantizado en Python
+    # Cálculo matemático 100% determinístico en Python
     resultados_local = {k: calcular_motor(v, modo_motor) for k, v in stats_local.items()}
     resultados_visita = {k: calcular_motor(v, modo_motor) for k, v in stats_visita.items()}
 
-    # 2. Gemini redacta los cruces a partir de los datos verificados
-    with st.spinner("🧠 Generando análisis táctico y cruces estadísticos..."):
+    # Gemini genera la síntesis y lectura táctica de las series verificadas
+    with st.spinner("🧠 Generando análisis táctico con Gemini..."):
         client_gemini = genai.Client(api_key=api_key_gemini)
         
         prompt_cualitativo = f"""
-        Eres un analista deportivo cuantitativo. Dispones de datos ESTADÍSTICOS 100% REALES Y YA CALCULADOS para el partido {equipo_local} (Local) vs {equipo_visitante} (Visitante):
+        Eres un analista deportivo cuantitativo. Dispones de datos ESTADÍSTICOS 100% REALES Y OFICIALES para el partido {equipo_local} (Local) vs {equipo_visitante} (Visitante):
 
         SERIES LOCAL ({equipo_local} en casa, últimos {n_partidos} partidos):
         {json.dumps(stats_local)}
@@ -190,10 +216,9 @@ if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
         {json.dumps(stats_visita)}
 
         REGLA ESTRICTA:
-        Está TERMINANTEMENTE PROHIBIDO inventar o alterar cualquier número o porcentaje. 
-        Tu labor consiste ÚNICAMENTE en redactar:
+        No inventes ningún número. Con base en las series auditadas, redacta:
         1. "contexto_general": 2 frases sobre la actualidad deportiva real de ambos clubes.
-        2. "cruces_local": Para cada una de las estadísticas provistas, 1 frase de cruce estadístico evaluando cómo interactúa la producción del Local con el comportamiento del Visitante, asignando una clasificación visual (🟢 Alta consistencia, 🟡 Moderada, 🔴 Baja consistencia).
+        2. "cruces_local": Para cada una de las estadísticas, 1 frase de cruce estadístico evaluando la producción de {equipo_local} frente al comportamiento de {equipo_visitante}, clasificando con emojis (🟢 Alta consistencia, 🟡 Moderada, 🔴 Baja consistencia).
 
         Devuelve ÚNICAMENTE un JSON con esta estructura:
         {{
@@ -219,9 +244,9 @@ if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
             )
             analisis_ia = json.loads(resp.text)
         except Exception as e:
-            st.warning(f"No se pudo generar el texto de IA, mostrando métricas numéricas puras: {e}")
+            st.warning(f"Aviso: Las métricas numéricas se cargaron con éxito; redacción de cruces en pausa: {e}")
 
-    st.success("✅ Actas oficiales descargadas y auditadas correctamente.")
+    st.success("✅ Actas oficiales descargadas y auditadas exitosamente.")
     if "contexto_general" in analisis_ia:
         st.markdown(f"**Contexto Competitivo:** {analisis_ia['contexto_general']}")
 
