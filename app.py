@@ -69,16 +69,16 @@ def calcular_motor(valores, modo="8/5/3/1"):
     }
 
 st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Motor cuantitativo oficial impulsado por Gemini 2.5 Pro.")
+st.caption("Motor cuantitativo con Gemini 3.1 Pro Preview.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Google AI Studio API Key", type="password")
     
-    # Modelos actualizados compatibles con la versión v1beta de la API
+    # Nombre de modelo oficial indicado por el endpoint de tu cuenta
     modelo_seleccionado = st.selectbox(
         "Modelo de Gemini",
-        ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-flash"],
         index=0
     )
     
@@ -88,7 +88,7 @@ with st.sidebar:
     if api_key and st.checkbox("🔍 Diagnóstico: Listar modelos de mi clave"):
         try:
             temp_client = genai.Client(api_key=api_key)
-            st.write("Modelos disponibles:")
+            st.write("Modelos activos en tu clave:")
             for m in temp_client.models.list():
                 if "generateContent" in m.supported_actions:
                     st.code(m.name.replace("models/", ""))
@@ -143,7 +143,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
         8. Saques de meta
         9. Tackles
 
-        Devuelve ÚNICAMENTE un JSON con esta estructura exacta, sin texto adicional ni formato markdown:
+        Devuelve ÚNICAMENTE un JSON con esta estructura exacta, sin texto adicional:
         {{
           "contexto": "Breve síntesis de 2 frases sobre la dinámica real de ambos equipos.",
           "local": {{
