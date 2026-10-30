@@ -63,20 +63,21 @@ def calcular_motor(valores, modo="8/5/3/1"):
 
 # ----------------- INTERFAZ STREAMLIT -----------------
 st.title("⚽ MATCHSTAT Global Engine")
-st.caption("Rastreo web en tiempo real con Google Search nativo (100% Gratuito).")
+st.caption("Rastreo web en tiempo real con Google Search nativo (Gemini 3.8 Flash).")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Google AI Studio API Key", type="password")
     
+    # Nombre oficial requerido por tu cuenta de Google
     modelo_seleccionado = st.selectbox(
         "Modelo con Google Search",
-        ["gemini-2.5-flash", "gemini-2.0-flash"],
+        ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
         index=0
     )
     modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar puro)"])
     st.markdown("---")
-    st.info("💡 **Google Search Grounding:** Gemini rastrea directamente en Google fichas de Flashscore, Promiedos, FBref y paneles oficiales.")
+    st.info("💡 **Gemini 3.8 Flash** cuenta con acceso gratuito y búsqueda en vivo en Google.")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -142,7 +143,7 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
         """
 
         try:
-            # Llamada con Google Search nativo activado (Grounding)
+            # Llamada con Gemini 3.8 Flash y Google Search nativo
             response = client.models.generate_content(
                 model=modelo_seleccionado,
                 contents=prompt,
@@ -167,7 +168,6 @@ if st.button("🚀 Iniciar Análisis Cuantitativo", use_container_width=True):
             tab_local, tab_visita = st.tabs([f"🏠 {equipo_local} (Local)", f"✈️ {equipo_visitante} (Visitante)"])
 
             def render_equipo(stats, lista_partidos):
-                # Mostrar los partidos auditados para garantizar transparencia
                 if lista_partidos:
                     st.markdown("<div class='match-box'><b>📋 Partidos auditados en la muestra (cronológico):</b><br>" + " | ".join(lista_partidos) + "</div>", unsafe_allow_html=True)
                 
