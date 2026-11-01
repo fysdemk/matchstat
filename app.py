@@ -2,8 +2,7 @@ import streamlit as st
 import requests
 import json
 import re
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 st.set_page_config(page_title="MATCHSTAT Global Engine — ESPN Direct", page_icon="⚽", layout="wide")
 
@@ -98,7 +97,6 @@ def obtener_equipos_de_liga(codigo_liga):
         return []
 
 def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True, total_partidos=8, progress_bar=None, status_text=None):
-    # 1. Calendario oficial del equipo
     url_schedule = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{codigo_liga}/teams/{team_id}/schedule"
     r = requests.get(url_schedule, headers=HEADERS_ESPN, timeout=10)
     if r.status_code != 200:
@@ -106,7 +104,6 @@ def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True
 
     events = r.json().get("events", [])
     
-    # 2. Filtrar partidos terminados con la localía correcta
     partidos_validos = []
     for ev in events:
         comp = ev.get("competitions", [{}])[0]
@@ -124,7 +121,6 @@ def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True
         cond = "local" if es_local else "visitante"
         return None, [], f"Solo se encontraron {len(partidos_validos)} partidos finalizados de {cond} para {nombre_equipo} en ESPN."
 
-    # Tomar exactamente los últimos N y ordenarlos cronológicamente
     muestra = partidos_validos[-total_partidos:]
 
     stats = {
@@ -138,7 +134,6 @@ def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True
     }
     nombres_partidos = []
 
-    # 3. Descarga acta por acta mostrando el progreso en pantalla
     for i, ev in enumerate(muestra):
         event_id = ev["id"]
         fecha = ev.get("date", "")[:10]
@@ -150,7 +145,6 @@ def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True
         if progress_bar:
             progress_bar.progress((i + 1) / total_partidos)
 
-        # Endpoint oficial de actas de ESPN
         url_summary = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{codigo_liga}/summary?event={event_id}"
         r_sum = requests.get(url_summary, headers=HEADERS_ESPN, timeout=10)
         
@@ -160,7 +154,6 @@ def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True
         if r_sum.status_code == 200:
             sum_data = r_sum.json()
             
-            # Goles
             for hc in sum_data.get("header", {}).get("competitions", [{}])[0].get("competitors", []):
                 if str(hc.get("id")) == str(team_id):
                     try:
@@ -168,7 +161,6 @@ def obtener_estadisticas_espn(codigo_liga, team_id, nombre_equipo, es_local=True
                     except:
                         goles_partido = 0
 
-            # Ficha técnica
             box_teams = sum_data.get("boxscore", {}).get("teams", [])
             for bt in box_teams:
                 if str(bt.get("team", {}).get("id")) == str(team_id):
@@ -212,8 +204,14 @@ st.caption("Extracción en vivo de actas oficiales con barra de progreso.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
-    api_key_gemini = st.text_input("Google AI Studio API Key", type="password")
-    modelo_gemini = st.selectbox("Modelo para redacción táctica", ["gemini-3.8-flash", "gemini-3.5-flash-lite"], index=0)
+    
+    proveedor_ia = st.selectbox(
+        "Proveedor de IA",
+        ["Groq (Gratis / Llama 3.3 70B)", "Perplexity (Búsqueda Web en Vivo)", "OpenAI (GPT-4o-mini)"],
+        index=0
+    )
+    
+    api_key_ia = st.text_input(f"API Key de {proveedor_ia.split()[0]}", type="password")
     
     liga_seleccionada = st.selectbox("Seleccionar Torneo / Liga", list(LIGAS_DISPONIBLES.keys()), index=0)
     codigo_liga = LIGAS_DISPONIBLES[liga_seleccionada]
@@ -241,8 +239,8 @@ with col2:
         equipo_visita_nombre = st.text_input("Equipo Visitante", value="River Plate")
 
 if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
-    if not api_key_gemini:
-        st.error("Por favor, ingresa tu API Key de Google AI Studio en la barra lateral.")
+    if not api_key_ia:
+        st.error(f"Por favor, ingresa tu API Key de {proveedor_ia.split()[0]} en la barra lateral.")
         st.stop()
 
     n_partidos = 8 if "8" in modo_motor else 7
@@ -284,48 +282,76 @@ if st.button("🚀 Extraer Datos Reales y Analizar", use_container_width=True):
     res_local = {k: calcular_motor(v, modo_motor) for k, v in stats_local.items()}
     res_visita = {k: calcular_motor(v, modo_motor) for k, v in stats_visita.items()}
 
-    # 4. Redacción cualitativa con Gemini
-    with st.spinner("🧠 Redactando cruces tácticos con Gemini..."):
-        client = genai.Client(api_key=api_key_gemini)
-        prompt_texto = f"""
-        Eres un analista deportivo cuantitativo. Dispones de datos ESTADÍSTICOS 100% REALES de ESPN para {equipo_local_nombre} (Local) vs {equipo_visita_nombre} (Visitante):
+    # 4. Redacción cualitativa con IA (Groq / Perplexity / OpenAI)
+    with st.spinner(f"🧠 Redactando cruces tácticos con {proveedor_ia.split()[0]}..."):
+        if "Groq" in proveedor_ia:
+            cliente_ia = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key_ia)
+            modelo_elegido = "llama-3.3-70b-versatile"
+        elif "Perplexity" in proveedor_ia:
+            cliente_ia = OpenAI(base_url="https://api.perplexity.ai", api_key=api_key_ia)
+            modelo_elegido = "sonar"
+        else:
+            cliente_ia = OpenAI(api_key=api_key_ia)
+            modelo_elegido = "gpt-4o-mini"
 
-        SERIES LOCAL ({equipo_local_nombre} en casa, últimos {n_partidos} partidos):
+        prompt_sistema = "Eres un analista cuantitativo de fútbol de élite. Respondes ÚNICAMENTE en formato JSON válido, sin bloques de texto adicionales."
+
+        prompt_usuario = f"""
+        Dispones de datos ESTADÍSTICOS 100% REALES extraídos de ESPN para el partido:
+        {equipo_local_nombre} (Local) vs {equipo_visita_nombre} (Visitante).
+
+        SERIES AUDITADAS LOCAL ({equipo_local_nombre} en casa, últimos {n_partidos} partidos):
         {json.dumps(stats_local)}
 
-        SERIES VISITANTE ({equipo_visita_nombre} fuera, últimos {n_partidos} partidos):
+        SERIES AUDITADAS VISITANTE ({equipo_visita_nombre} fuera, últimos {n_partidos} partidos):
         {json.dumps(stats_visita)}
 
-        REGLA ESTRICTA:
-        No inventes ningún número. Con base en las series auditadas, redacta:
-        1. "contexto_general": 2 frases sobre la actualidad deportiva real de ambos clubes.
-        2. "cruces_local": Para cada una de las estadísticas, 1 frase de cruce estadístico evaluando la producción de {equipo_local_nombre} frente al comportamiento de {equipo_visita_nombre}, clasificando con emojis (🟢 Alta consistencia, 🟡 Moderada, 🔴 Baja consistencia).
+        REGLAS ESTRICTAS:
+        - No inventes ningún dato numérico fuera de las series provistas.
+        - Redacta:
+          1. "contexto_general": 2 frases sobre la actualidad deportiva reciente de ambos equipos.
+          2. "cruces_local": Para cada una de las 7 estadísticas, 1 frase evaluando el choque estadístico entre ambos, clasificando con emojis de consistencia (🟢 Alta, 🟡 Moderada, 🔴 Baja).
 
-        Devuelve ÚNICAMENTE un JSON con esta estructura:
+        ESTRUCTURA EXACTA DE RESPUESTA REQUERIDA (JSON):
         {{
-          "contexto_general": "...",
+          "contexto_general": "texto...",
           "cruces_local": {{
-            "Goles": "...",
-            "Tiros de esquina": "...",
-            "Tarjetas": "...",
-            "Remates totales": "...",
-            "Tiros al arco": "...",
-            "Faltas cometidas": "...",
-            "Fueras de juego": "..."
+            "Goles": "🟢/🟡/🔴 texto...",
+            "Tiros de esquina": "🟢/🟡/🔴 texto...",
+            "Tarjetas": "🟢/🟡/🔴 texto...",
+            "Remates totales": "🟢/🟡/🔴 texto...",
+            "Tiros al arco": "🟢/🟡/🔴 texto...",
+            "Faltas cometidas": "🟢/🟡/🔴 texto...",
+            "Fueras de juego": "🟢/🟡/🔴 texto..."
           }}
         }}
         """
 
         analisis_ia = {}
         try:
-            resp = client.models.generate_content(
-                model=modelo_gemini,
-                contents=prompt_texto,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
-            )
-            analisis_ia = json.loads(resp.text)
+            kwargs = {
+                "model": modelo_elegido,
+                "messages": [
+                    {"role": "system", "content": prompt_sistema},
+                    {"role": "user", "content": prompt_usuario}
+                ],
+                "temperature": 0.2
+            }
+            
+            # OpenAI y Groq permiten modo JSON estructurado nativo
+            if "Perplexity" not in proveedor_ia:
+                kwargs["response_format"] = {"type": "json_object"}
+
+            resp = cliente_ia.chat.completions.create(**kwargs)
+            contenido = resp.choices[0].message.content.strip()
+
+            # Limpieza defensiva en caso de que el modelo retorne bloques markdown ```json ... ```
+            if "```" in contenido:
+                contenido = re.sub(r"```json\s*|```", "", contenido).strip()
+
+            analisis_ia = json.loads(contenido)
         except Exception as e:
-            st.warning(f"Redacción cualitativa en pausa ({e}), mostrando métricas matemáticas puras:")
+            st.warning(f"Redacción cualitativa no disponible ({e}), mostrando métricas matemáticas puras:")
 
     st.success("✅ Análisis completado con actas oficiales verificadas.")
     if "contexto_general" in analisis_ia:
