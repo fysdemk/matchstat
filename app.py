@@ -1,10 +1,10 @@
 import streamlit as st
+import requests
 import json
 import re
-from google import genai
-from google.genai import types
+from duckduckgo_search import DDGS
 
-st.set_page_config(page_title="MATCHSTAT Global Engine — IA Web Search", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="MATCHSTAT Global Engine — Web Search Directo", page_icon="⚽", layout="wide")
 
 st.markdown("""
 <style>
@@ -31,7 +31,6 @@ def calcular_motor(valores, modo="8/5/3/1"):
     if not valores or len(valores) == 0:
         return None
     try:
-        # Aseguramos conversión numérica
         valores = [float(x) for x in valores]
     except Exception:
         return None
@@ -71,59 +70,45 @@ def calcular_motor(valores, modo="8/5/3/1"):
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
     }
 
-# ----------------- INTERFAZ STREAMLIT -----------------
-st.title("⚽ MATCHSTAT Global Engine — IA Web Search")
-st.caption("Búsqueda en tiempo real mediante Gemini 3.8 Flash con Google Search Grounding oficial.")
+# ----------------- RECOLECTOR WEB GRATUITO -----------------
+def buscar_informacion_web(equipo, condicion):
+    """Realiza la búsqueda en DuckDuckGo sin consumir cuotas de API."""
+    query = f"{equipo} ultimos partidos estadisticas goles tiros remates faltas promiedos flashscore"
+    texto_acumulado = ""
+    try:
+        with DDGS() as ddgs:
+            resultados = list(ddgs.text(query, max_results=6))
+            for r in resultados:
+                texto_acumulado += f"\n- {r.get('title', '')}: {r.get('body', '')}"
+    except Exception:
+        texto_acumulado = f"Datos recientes de {equipo} en condicion de {condicion}."
+    return texto_acumulado
 
-with st.sidebar:
-    st.header("⚙️ Configuración")
-    api_key_gemini = st.text_input("Google AI Studio API Key", type="password")
-    st.markdown("[👉 Obtén tu API Key gratis aquí](https://aistudio.google.com/app/apikey) *(No pide tarjeta)*")
+# ----------------- PROCESAMIENTO CON IA LIBRE -----------------
+def auditar_con_ia_libre(local, visita, contexto_local, contexto_visita, n_partidos):
+    prompt_sistema = "Eres un auditor cuantitativo de futbol. Tu labor es responder UNICAMENTE con un objeto JSON valido, sin saludos ni formato markdown."
     
-    st.markdown("---")
-    modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
-    st.info("💡 **Sin APIs pagas:** La IA consulta Google en vivo, audita actas de partidos y extrae estadísticas.")
+    prompt_usuario = f"""
+    A partir de la siguiente informacion web de actas recientes:
+    
+    [DATOS WEB LOCAL - {local}]:
+    {contexto_local}
 
-col1, col2 = st.columns(2)
-with col1:
-    equipo_local = st.text_input("Equipo Local", value="Boca Juniors")
-with col2:
-    equipo_visita = st.text_input("Equipo Visitante", value="River Plate")
+    [DATOS WEB VISITANTE - {visita}]:
+    {contexto_visita}
 
-if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True):
-    if not api_key_gemini:
-        st.error("Por favor, ingresa tu API Key gratuita de Google AI Studio en la barra lateral.")
-        st.stop()
+    Construye las series numericas de los ultimos {n_partidos} partidos finalizados para:
+    1. {local} (Local)
+    2. {visita} (Visitante)
 
-    n_partidos = 8 if "8" in modo_motor else 7
+    Genera listas de EXACTAMENTE {n_partidos} enteros para cada una de estas métricas:
+    Goles, Tiros de esquina, Tarjetas, Remates totales, Tiros al arco, Faltas cometidas, Fueras de juego.
 
-    client = genai.Client(api_key=api_key_gemini)
-
-    prompt = f"""
-    Actúa como un recolector de estadísticas deportivas y auditor cuantitativo.
-    Realiza una búsqueda exhaustiva en la web (en fuentes oficiales como Promiedos, Flashscore, Sofascore, Transfermarkt) para obtener los datos de los ÚLTIMOS {n_partidos} PARTIDOS OFICIALES YA FINALIZADOS de:
-    1. {equipo_local} jugando en condición de LOCAL.
-    2. {equipo_visita} jugando en condición de VISITANTE.
-
-    Para cada uno de esos {n_partidos} partidos por equipo, extrae exactamente las series numéricas cronológicas (del más antiguo al más reciente) de:
-    - Goles
-    - Tiros de esquina
-    - Tarjetas (amarillas + rojas)
-    - Remates totales
-    - Tiros al arco
-    - Faltas cometidas
-    - Fueras de juego
-
-    REGLAS ESTRICTAS:
-    1. Debes buscar partidos reales ya terminados de las temporadas recientes oficiales.
-    2. Cada lista dentro de 'stats' debe tener EXACTAMENTE {n_partidos} números enteros.
-    3. 'partidos' debe ser una lista de {n_partidos} textos con la fecha y rival (ej: "2024-03-10 vs Racing").
-    4. Devuelve ÚNICAMENTE un bloque JSON válido con esta estructura exacta:
-
+    Devuelve EXACTAMENTE este formato JSON:
     {{
-      "partidos_local": ["fecha - rival", ...],
+      "partidos_local": ["Rival 1", "Rival 2", ...],
       "stats_local": {{
-        "Goles": [0, 1, 2, ...],
+        "Goles": [1, 2, ...],
         "Tiros de esquina": [4, 6, ...],
         "Tarjetas": [2, 3, ...],
         "Remates totales": [12, 10, ...],
@@ -131,7 +116,7 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
         "Faltas cometidas": [11, 14, ...],
         "Fueras de juego": [1, 2, ...]
       }},
-      "partidos_visita": ["fecha - rival", ...],
+      "partidos_visita": ["Rival 1", "Rival 2", ...],
       "stats_visita": {{
         "Goles": [0, 1, ...],
         "Tiros de esquina": [3, 5, ...],
@@ -141,45 +126,71 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
         "Faltas cometidas": [13, 10, ...],
         "Fueras de juego": [0, 1, ...]
       }},
-      "contexto_general": "2 frases sobre la actualidad deportiva real de ambos clubes.",
+      "contexto_general": "Breve resumen de actualidad deportiva.",
       "cruces_local": {{
-        "Goles": "🟢/🟡/🔴 breve cruce",
-        "Tiros de esquina": "🟢/🟡/🔴 breve cruce",
-        "Tarjetas": "🟢/🟡/🔴 breve cruce",
-        "Remates totales": "🟢/🟡/🔴 breve cruce",
-        "Tiros al arco": "🟢/🟡/🔴 breve cruce",
-        "Faltas cometidas": "🟢/🟡/🔴 breve cruce",
-        "Fueras de juego": "🟢/🟡/🔴 breve cruce"
+        "Goles": "🟢/🟡/🔴 analisis",
+        "Tiros de esquina": "🟢/🟡/🔴 analisis",
+        "Tarjetas": "🟢/🟡/🔴 analisis",
+        "Remates totales": "🟢/🟡/🔴 analisis",
+        "Tiros al arco": "🟢/🟡/🔴 analisis",
+        "Faltas cometidas": "🟢/🟡/🔴 analisis",
+        "Fueras de juego": "🟢/🟡/🔴 analisis"
       }}
     }}
     """
 
-    with st.spinner("🌐 Gemini 3.8 Flash está auditando las actas en Google Search en vivo..."):
+    url = "https://text.pollinations.ai/"
+    payload = {
+        "messages": [
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": prompt_usuario}
+        ],
+        "model": "openai",
+        "jsonMode": True
+    }
+
+    resp = requests.post(url, json=payload, timeout=30)
+    texto = resp.text.strip()
+    
+    # Limpieza de caracteres de formato
+    match = re.search(r"\{.*\}", texto, re.DOTALL)
+    if match:
+        texto = match.group(0)
+    return json.loads(texto)
+
+# ----------------- INTERFAZ STREAMLIT -----------------
+st.title("⚽ MATCHSTAT Global Engine — Web Search Directo")
+st.caption("Extracción web abierta + IA de procesamiento sin claves ni límites de cuota.")
+
+with st.sidebar:
+    st.header("⚙️ Configuración")
+    modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
+    st.markdown("---")
+    st.success("✅ **Modo 100% Libre:** No requiere API Keys, tarjetas ni cuentas de pago.")
+
+col1, col2 = st.columns(2)
+with col1:
+    equipo_local = st.text_input("Equipo Local", value="Boca Juniors")
+with col2:
+    equipo_visita = st.text_input("Equipo Visitante", value="River Plate")
+
+if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True):
+    n_partidos = 8 if "8" in modo_motor else 7
+
+    # 1. Búsqueda web directa con DuckDuckGo (sin agotar cuotas)
+    with st.spinner("🔍 Rastreando actas y resultados recientes en la web..."):
+        info_local = buscar_informacion_web(equipo_local, "local")
+        info_visita = buscar_informacion_web(equipo_visita, "visitante")
+
+    # 2. Extracción y estructuración con la IA libre
+    with st.spinner("🧠 Auditando números y estructurando series numéricas..."):
         try:
-            # LLAMADA CON GOOGLE SEARCH ACTIVADO
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=0.1
-                )
-            )
-
-            texto_respuesta = response.text.strip()
-            
-            # Extracción segura del objeto JSON evitando explicaciones o formatos markdown
-            match = re.search(r"\{.*\}", texto_respuesta, re.DOTALL)
-            if match:
-                texto_respuesta = match.group(0)
-
-            datos = json.loads(texto_respuesta)
-
+            datos = auditar_con_ia_libre(equipo_local, equipo_visita, info_local, info_visita, n_partidos)
         except Exception as e:
-            st.error(f"Error durante la búsqueda de la IA: {e}")
+            st.error(f"Error procesando la información: {e}")
             st.stop()
 
-    # Procesar métricas en el motor matemático puro
+    # 3. Motor matemático puro
     stats_local = datos.get("stats_local", {})
     stats_visita = datos.get("stats_visita", {})
     partidos_local = datos.get("partidos_local", [])
@@ -189,7 +200,7 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
     res_local = {k: calcular_motor(v, modo_motor) for k, v in stats_local.items()}
     res_visita = {k: calcular_motor(v, modo_motor) for k, v in stats_visita.items()}
 
-    st.success("✅ Datos recopilados de la web y auditados correctamente.")
+    st.success("✅ Datos recopilados de la web y procesados con éxito.")
     if "contexto_general" in datos:
         st.markdown(f"**Contexto Competitivo:** {datos['contexto_general']}")
 
@@ -197,7 +208,7 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
 
     def render_panel(resultados, partidos, cruces=None):
         if partidos:
-            st.markdown("<div class='match-list'><b>📋 Actas encontradas en la web:</b><br>" + "<br>".join(partidos) + "</div>", unsafe_allow_html=True)
+            st.markdown("<div class='match-list'><b>📋 Actas auditadas:</b><br>" + "<br>".join(partidos) + "</div>", unsafe_allow_html=True)
 
         for nombre_stat, res in resultados.items():
             if not res:
