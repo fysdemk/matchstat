@@ -30,6 +30,12 @@ st.markdown("""
 def calcular_motor(valores, modo="8/5/3/1"):
     if not valores or len(valores) == 0:
         return None
+    try:
+        # Aseguramos conversión numérica
+        valores = [float(x) for x in valores]
+    except Exception:
+        return None
+
     tam_macro = 8 if "8" in modo else 7
     macro = valores[-tam_macro:]
     p5 = macro[-5:]
@@ -56,7 +62,10 @@ def calcular_motor(valores, modo="8/5/3/1"):
     pct_prin_3 = round(sum(1 for x in p3 if x > u_prin) / len(p3) * 100, 1)
 
     return {
-        "macro": macro, "p5": p5, "p3": p3, "p1": p1,
+        "macro": [int(x) if x.is_integer() else x for x in macro],
+        "p5": [int(x) if x.is_integer() else x for x in p5],
+        "p3": [int(x) if x.is_integer() else x for x in p3],
+        "p1": int(p1) if p1.is_integer() else p1,
         "prom": prom, "med": med, "min": min_val, "max": max_val,
         "u_min": u_min, "pct_min": (pct_min_macro, pct_min_5, pct_min_3),
         "u_prin": u_prin, "pct_prin": (pct_prin_macro, pct_prin_5, pct_prin_3)
@@ -64,16 +73,16 @@ def calcular_motor(valores, modo="8/5/3/1"):
 
 # ----------------- INTERFAZ STREAMLIT -----------------
 st.title("⚽ MATCHSTAT Global Engine — IA Web Search")
-st.caption("Búsqueda y auditoría en vivo en la web mediante Gemini con Google Search Grounding.")
+st.caption("Búsqueda en tiempo real mediante Gemini 3.8 Flash con Google Search Grounding oficial.")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
-    api_key_gemini = st.text_input("Google AI Studio API Key (Gratis)", type="password")
-    st.markdown("[👉 Genera tu API Key gratis aquí](https://aistudio.google.com/app/apikey) *(No pide tarjeta)*")
+    api_key_gemini = st.text_input("Google AI Studio API Key", type="password")
+    st.markdown("[👉 Obtén tu API Key gratis aquí](https://aistudio.google.com/app/apikey) *(No pide tarjeta)*")
     
     st.markdown("---")
     modo_motor = st.selectbox("Estructura de la muestra", ["8/5/3/1 (Ciclo Extendido)", "7/5/3/1 (Estándar)"])
-    st.info("💡 **Sin APIs pagas:** La IA consulta Google en tiempo real, busca los últimos partidos oficiales y extrae las estadísticas.")
+    st.info("💡 **Sin APIs pagas:** La IA consulta Google en vivo, audita actas de partidos y extrae estadísticas.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -109,7 +118,7 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
     1. Debes buscar partidos reales ya terminados de las temporadas recientes oficiales.
     2. Cada lista dentro de 'stats' debe tener EXACTAMENTE {n_partidos} números enteros.
     3. 'partidos' debe ser una lista de {n_partidos} textos con la fecha y rival (ej: "2024-03-10 vs Racing").
-    4. Devuelve ÚNICAMENTE un bloque JSON válido con esta estructura:
+    4. Devuelve ÚNICAMENTE un bloque JSON válido con esta estructura exacta:
 
     {{
       "partidos_local": ["fecha - rival", ...],
@@ -145,11 +154,11 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
     }}
     """
 
-    with st.spinner("🌐 La IA está navegando en Google y auditando las actas de los partidos..."):
+    with st.spinner("🌐 Gemini 3.8 Flash está auditando las actas en Google Search en vivo..."):
         try:
-            # ACTIVACIÓN DE LA BÚSQUEDA WEB EN TIEMPO REAL
+            # LLAMADA CON GOOGLE SEARCH ACTIVADO
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     tools=[types.Tool(google_search=types.GoogleSearch())],
@@ -159,9 +168,10 @@ if st.button("🚀 Buscar Datos en la Web y Analizar", use_container_width=True)
 
             texto_respuesta = response.text.strip()
             
-            # Limpieza en caso de que la respuesta venga envuelta en ```json ... ```
-            if "```" in texto_respuesta:
-                texto_respuesta = re.sub(r"```json\s*|```", "", texto_respuesta).strip()
+            # Extracción segura del objeto JSON evitando explicaciones o formatos markdown
+            match = re.search(r"\{.*\}", texto_respuesta, re.DOTALL)
+            if match:
+                texto_respuesta = match.group(0)
 
             datos = json.loads(texto_respuesta)
 
